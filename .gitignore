@@ -1,0 +1,48 @@
+# Secrets — never commit
+.env
+
+# Per-user databases and live data
+data/
+*.db
+*.db-shm
+*.db-wal
+
+# Cloudflare tunnel credentials
+cloudflared/*.json
+
+# TLS certificates and private keys
+*.pem
+*.key
+*.crt
+
+# Claude Code project state
+.claude/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# Node / frontend build
+node_modules/
+dist/
+.turbo/
+
+# macOS
+.DS_Store
+
+# detect-secrets baseline (generated on first scan — commit this file)
+# .secrets.baseline   ← keep this committed; remove from list if you use detect-secrets
+
+# Docker override for local dev (machine-specific, not for repo)
+docker-compose.override.yml
+
+# Operational and internal docs — not for contributors
+system.md
+CLAUDE.md
+constraints.md
+launch-prep/
