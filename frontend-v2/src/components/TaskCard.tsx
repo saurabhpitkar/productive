@@ -154,7 +154,7 @@ export function TaskCard({ doc, isRoot = false, isParent = false, depth = 0, exp
               {doc.name}
             </p>
           </div>
-          {(doc.priority || doc.due_date || doc.linked_doc_ids.length > 0) && (
+          {(doc.priority || doc.due_date || doc.linked_doc_ids.length > 0 || doc.hitl_required) && (
             <div className="flex flex-wrap items-center gap-1.5 mt-1">
               {doc.priority && (
                 <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${PRIORITY_STYLE[doc.priority]}`}>
@@ -169,6 +169,13 @@ export function TaskCard({ doc, isRoot = false, isParent = false, depth = 0, exp
               {doc.linked_doc_ids.length > 0 && (
                 <span className="text-xs text-gray-400 dark:text-gray-500">
                   {doc.linked_doc_ids.length} linked
+                </span>
+              )}
+              {doc.hitl_required && (
+                <span className="inline-flex items-center gap-0.5 text-xs text-amber-600 dark:text-amber-400" title="Human review required">
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                  </svg>
                 </span>
               )}
             </div>

@@ -32,7 +32,7 @@ AI agents (via PAT tokens or MCP) can read and write docs. You set which docs ar
 **Prerequisites:** Docker Desktop, a Google Cloud project (for OAuth), and an Anthropic or Google AI API key.
 
 ```bash
-git clone <this-repo> productive
+git clone https://github.com/saurabhpitkar/productive.git
 cd productive
 cp .env.example .env
 ```
@@ -45,12 +45,14 @@ JWT_SECRET_KEY=          # openssl rand -hex 32
 ENCRYPTION_KEY=          # python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 APP_ORIGIN_V2=https://your-domain.com
 
-# At least one OAuth provider is required
+# OAuth options for logging in
+
+## Google OAuth
 GOOGLE_CLIENT_ID=        # console.cloud.google.com → APIs → Credentials
 GOOGLE_CLIENT_SECRET=
 GOOGLE_REDIRECT_URI=https://your-domain.com/api/v1/auth/callback
 
-# GitHub OAuth (optional - but recommended for developers)
+## GitHub OAuth
 GITHUB_CLIENT_ID=        # github.com/settings/developers → New OAuth App
 GITHUB_CLIENT_SECRET=    # Callback URL: https://your-domain.com/api/v1/auth/github/callback
 ```
@@ -63,7 +65,7 @@ docker compose up -d
 
 Open `http://localhost:3001` (or your domain). Sign in with GitHub or Google. On first login you'll be offered the demo vault.
 
-### GitHub OAuth app setup (2 minutes)
+### GitHub OAuth app setup 
 
 1. Go to [github.com/settings/developers](https://github.com/settings/developers) → **New OAuth App**
 2. Set **Authorization callback URL** to `https://your-domain.com/api/v1/auth/github/callback`
@@ -89,7 +91,26 @@ The demo is opt-in and idempotent - if you already have docs the seed endpoint i
 
 ### 1. Everything is a doc
 
-A doc has a name, a markdown body, optional metadata (due date, priority, status, tags), and typed links to other docs.
+A doc has a name, a markdown body, optional metadata, and typed links to other docs. Every field is optional except `name`.
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | UUID | Server-generated primary key |
+| `name` | string | Title |
+| `body` | string | Markdown body (empty string if unset) |
+| `status` | enum | `todo` / `in_progress` / `done` / `cancelled` / `archived` |
+| `priority` | enum | `high` / `medium` / `low` / null |
+| `due_date` | string | `YYYY-MM-DD` or null |
+| `due_time` | string | `HH:MM` (24h) or null |
+| `flag` | boolean | Flagged for attention |
+| `list_id` | UUID | Folder / list assignment (optional) |
+| `tags` | object | Free-form `{key: value}` metadata pairs |
+| `linked_doc_ids` | UUID[] | IDs of docs this doc links to (derived from links table) |
+| `hitl_required` | boolean | When true, untrusted agent writes go to review queue instead of applying directly |
+| `hitl_status` | enum | `pending` while a review is queued, null otherwise |
+| `note_outline` | JSON | Auto-computed heading structure `[{level, text}]` (read-only, updated on every body save) |
+| `created_at` | ISO 8601 | Creation timestamp (UTC, server-set) |
+| `updated_at` | ISO 8601 | Last modified (UTC, server-set on every write) |
 
 ### 2. Link types shape the graph
 
@@ -105,7 +126,7 @@ A doc has a name, a markdown body, optional metadata (due date, priority, status
 2. **Agents fill the branches**: given the root, an agent traverses links and fills each branch using context from sibling docs
 3. **Cross-domain links compound value**: an agent answering "is October a good time for Japan?" can traverse your Career doc (leave availability) and Finance doc (budget) - because those links exist
 
-### 4. HITL (Human-in-the-Loop)
+### 4. HITL (Human-in-the-Loop) to review agentic updates wherever needed
 
 Mark any doc as `hitl_required = true` from the UI. From that point:
 - Browser (you): writes go through immediately
@@ -115,11 +136,45 @@ Mark any doc as `hitl_required = true` from the UI. From that point:
 
 ---
 
-## Connecting AI agents
+## Connecting to your AI agents
 
 ### Personal Access Tokens (PATs)
 
-Generate a PAT in **Settings → API Access**. Use it as `Authorization: Bearer pa_…` on any API call.
+Generate a PAT in **Settings → API Access**. Use it as `Authorization: Bearer pa_…` header on any API call.
+
+All endpoints are under `/api/v1`. The full interactive schema is at `https://your-domain.com/api/docs`.
+
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/docs` | List docs — filter by `status`, `priority`, `q`, `limit`, `offset` |
+| POST | `/docs` | Create doc |
+| GET | `/docs/{id}` | Get single doc |
+| PATCH | `/docs/{id}` | Update doc — returns 202 + review\_id if the doc is HITL-protected |
+| DELETE | `/docs/{id}` | Hard delete doc |
+| GET | `/docs/all-links` | All typed link relationships for the user |
+| GET | `/docs/{id}/links` | Outgoing links with labels |
+| GET | `/docs/{id}/backlinks` | Docs that link to this doc |
+| POST | `/docs/{id}/links` | Add or update a typed link (`requires` / `related_to` / `up`) |
+| DELETE | `/docs/{id}/links/{target}` | Remove a link |
+| GET | `/lists` | All lists |
+| POST | `/lists` | Create list |
+| PATCH | `/lists/{id}` | Rename list |
+| DELETE | `/lists/{id}` | Delete list (docs unassigned, not deleted) |
+| GET | `/sync/delta` | Docs + lists changed since `?since=<ISO8601>` — used by the PWA sync engine |
+| GET | `/hitl/reviews` | Pending reviews (add `?outcome=all` for all statuses) |
+| GET | `/hitl/reviews/{id}` | Review detail including current doc state |
+| POST | `/hitl/reviews/{id}/resolve` | Approve / reject / cancel a review (trusted PAT or browser only) |
+| GET | `/ai/models` | Available AI models by provider |
+| GET | `/ai/settings` | AI configuration (API key masked) |
+| POST | `/ai/chat` | Chat with the AI assistant using the user's configured key |
+| GET | `/ai/usage` | 7-day token usage aggregated by day and model |
+| GET | `/tokens` | List your PATs (name, prefix, trusted flag, dates) |
+| POST | `/tokens` | Create a PAT — raw token returned once, never stored |
+| DELETE | `/tokens/{id}` | Revoke a PAT |
+
+**Endpoints that require browser (cookie) auth — PATs receive 403:**
+- `PATCH /tokens/{id}/trusted` — toggle a token's trusted flag (agents cannot self-elevate)
+- Setting `hitl_required: true` on a doc — only you can designate a doc as human-reviewed
 
 ```bash
 # List your docs
@@ -146,7 +201,7 @@ A 202 response means the write was intercepted for HITL review:
 
 In **Settings → API Access**, toggle a token to **Trusted** to let it bypass HITL review. Only you (browser/cookie auth) can change this flag - an agent cannot elevate its own trust.
 
-### HITL via API (for trusted agents or custom review UIs)
+### HITL via API integrations
 
 ```bash
 # List pending reviews
@@ -177,7 +232,17 @@ Restart: `docker compose up -d mcp-server`
 
 ### Step 2a: Claude Desktop (STDIO)
 
-Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
+**macOS** — open a terminal and run:
+
+```bash
+# Open the config file (create it first if it doesn't exist)
+mkdir -p ~/Library/Application\ Support/Claude
+open -e ~/Library/Application\ Support/Claude/claude_desktop_config.json
+```
+
+**Windows** — open `%APPDATA%\Claude\claude_desktop_config.json` in any text editor.
+
+Paste this config (merge with existing `mcpServers` if the file already has other servers):
 
 ```json
 {
@@ -193,11 +258,39 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
 }
 ```
 
-Restart Claude Desktop. You'll see "Productive" in the tools panel.
+Save, then **fully quit and restart Claude Desktop** (Cmd+Q / Alt+F4, not just close the window). You'll see "Productive" listed in the tools panel on the next conversation.
 
 ### Step 2b: Claude.ai web (HTTP/SSE)
 
-Expose port 3002 via Cloudflare Tunnel (add to your tunnel config), then add the MCP server URL in Claude.ai settings.
+**1. Expose the MCP server via Cloudflare Tunnel**
+
+Add a public hostname for port 3002 in your Cloudflare Zero Trust dashboard (e.g. `mcp.your-domain.com → localhost:3002`), or add a second ingress rule to your existing tunnel config.
+
+**2. Add the remote server in Claude.ai**
+
+Go to [claude.ai](https://claude.ai) → Settings → Integrations → **Add integration** → Remote MCP Server.
+
+Enter:
+- **Name:** Productive
+- **URL:** `https://mcp.your-domain.com/sse`
+
+Paste this JSON if your client requires a config file instead of a UI form (e.g. Claude Code or other MCP-compatible tools):
+
+```json
+{
+  "mcpServers": {
+    "productive": {
+      "type": "sse",
+      "url": "https://mcp.your-domain.com/sse",
+      "headers": {
+        "Authorization": "Bearer pa_your_token_here"
+      }
+    }
+  }
+}
+```
+
+For **Claude Code** specifically, add the above to `.claude/settings.json` in your project (or `~/.claude/settings.json` globally). The `pa_your_token_here` value is the same trusted PAT from Step 1.
 
 ### Available MCP tools
 

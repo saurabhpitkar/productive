@@ -142,10 +142,11 @@ export function DocPanel({ docId, onClose }: Props) {
   const [linkSearch,    setLinkSearch]   = useState('')
   const [linkFilter,    setLinkFilter]   = useState<'all' | 'today' | 'not_done'>('all')
   const [linkListFilter, setLinkListFilter] = useState('')
-  const [graphOpen,  setGraphOpen]  = useState(true)
-  const [listOpen,   setListOpen]   = useState(false)
-  const [noteOpen,   setNoteOpen]   = useState(false)
-  const [saving,     setSaving]    = useState(false)
+  const [graphOpen,     setGraphOpen]     = useState(true)
+  const [listOpen,      setListOpen]      = useState(false)
+  const [noteOpen,      setNoteOpen]      = useState(false)
+  const [hitlRequired,  setHitlRequired]  = useState(false)
+  const [saving,        setSaving]        = useState(false)
   const [autoSaveStatus, setAutoSaveStatus] = useState<'' | 'saved'>('')
 
   const initialized    = useRef(false)
@@ -153,9 +154,9 @@ export function DocPanel({ docId, onClose }: Props) {
   const autoSaveTimer  = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Mirror of current field values for use inside setTimeout closures
-  const fieldsRef = useRef({ name, body, flag, dueDate, dueTime, priority, status, listId, tagsStr })
+  const fieldsRef = useRef({ name, body, flag, dueDate, dueTime, priority, status, listId, tagsStr, hitlRequired })
   useEffect(() => {
-    fieldsRef.current = { name, body, flag, dueDate, dueTime, priority, status, listId, tagsStr }
+    fieldsRef.current = { name, body, flag, dueDate, dueTime, priority, status, listId, tagsStr, hitlRequired }
   })
 
   // Mark that the user has made a manual edit (prevents auto-save on initial load)
@@ -170,7 +171,7 @@ export function DocPanel({ docId, onClose }: Props) {
     setName(''); setBody(''); setFlag(false); setDueDate(''); setDueTime('')
     setPriority(''); setStatus('todo'); setListId(''); setTagsStr('')
     setLinkedIds([]); setWikiLinkedIds(new Set()); setLinkLabels({}); setBacklinks([]); setLinkSearch('')
-    setGraphOpen(true); setListOpen(false); setNoteOpen(false)
+    setGraphOpen(true); setListOpen(false); setNoteOpen(false); setHitlRequired(false)
   }, [docId])
 
   // If a stored docId doesn't exist in Dexie (stale from localStorage), close panel
@@ -189,6 +190,7 @@ export function DocPanel({ docId, onClose }: Props) {
     setName(doc.name)
     setBody(doc.body)
     setNoteOpen(doc.body.length > 0)
+    setHitlRequired(doc.hitl_required ?? false)
     setFlag(doc.flag ?? false)
     setDueDate(doc.due_date ?? '')
     setDueTime(doc.due_time ?? '')
@@ -222,15 +224,16 @@ export function DocPanel({ docId, onClose }: Props) {
     const f = fieldsRef.current
     if (!f.name.trim()) return
     await updateDoc(docId, {
-      name:     f.name.trim(),
-      body:     f.body,
-      flag:     f.flag || null,
-      due_date: f.dueDate || null,
-      due_time: f.dueTime || null,
-      priority: (f.priority || null) as Priority | null,
-      status:   f.status,
-      list_id:  f.listId  || null,
-      tags:     parseTags(f.tagsStr),
+      name:          f.name.trim(),
+      body:          f.body,
+      flag:          f.flag || null,
+      due_date:      f.dueDate || null,
+      due_time:      f.dueTime || null,
+      priority:      (f.priority || null) as Priority | null,
+      status:        f.status,
+      list_id:       f.listId  || null,
+      tags:          parseTags(f.tagsStr),
+      hitl_required: f.hitlRequired,
     })
   }, [docId])
 
@@ -246,7 +249,7 @@ export function DocPanel({ docId, onClose }: Props) {
       } catch { /* sync error, will retry */ }
     }, 2000)
     return () => { if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current) }
-  }, [name, body, flag, dueDate, dueTime, priority, status, listId, tagsStr, isNew, autoSave, doUpdateDoc])
+  }, [name, body, flag, dueDate, dueTime, priority, status, listId, tagsStr, hitlRequired, isNew, autoSave, doUpdateDoc])
 
   const outlineItems = useMemo(() => extractOutlineFromBody(body), [body])
 
@@ -424,6 +427,23 @@ export function DocPanel({ docId, onClose }: Props) {
         <input id="doc-tags" name="doc-tags" autoComplete="off" value={tagsStr}
           onChange={e => { setTagsStr(e.target.value); markEdited() }}
           placeholder="work=yes, project=alpha" className={FIELD_CLS} />
+      </div>
+      <div className="flex items-center justify-between py-1">
+        <div>
+          <Label>Human review required</Label>
+          <p className="text-[11px] text-gray-400 dark:text-gray-500 mt-0.5">
+            Untrusted agent writes will queue for your approval
+          </p>
+        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={hitlRequired}
+          onClick={() => { setHitlRequired(v => !v); markEdited() }}
+          className={`relative flex-shrink-0 w-9 h-5 rounded-full transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 ${hitlRequired ? 'bg-indigo-600' : 'bg-gray-200 dark:bg-gray-700'}`}
+        >
+          <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${hitlRequired ? 'translate-x-4' : 'translate-x-0'}`} />
+        </button>
       </div>
     </div>
   )
