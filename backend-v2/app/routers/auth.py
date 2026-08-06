@@ -23,7 +23,7 @@ from ..config import (
     GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET,
     ALLOWED_EMAILS, APP_ORIGIN_V2,
 )
-from ..database import ensure_schema, get_session_factory, seed_demo_data
+from ..database import ensure_schema, get_session_factory, seed_demo_data, seed_fresh_data
 from ..models import Base, UserSettings
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -208,6 +208,13 @@ async def github_callback(request: Request, code: str = "", state: str = "", err
 
 
 # ── Onboarding ────────────────────────────────────────────────────────────────
+
+@router.post("/seed-fresh")
+def seed_fresh(user: dict = Depends(require_user)):
+    """Seed onboarding guide docs for users who chose 'Start fresh'."""
+    seed_fresh_data(user["sub"])
+    return {"seeded": True}
+
 
 @router.post("/seed-demo")
 def seed_demo(user: dict = Depends(require_user)):

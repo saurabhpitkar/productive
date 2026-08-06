@@ -143,6 +143,17 @@ export function DemoSeedPrompt() {
     }
   }
 
+  const loadFresh = async () => {
+    setLoading(true)
+    try {
+      await fetch('/api/v1/auth/seed-fresh', { method: 'POST', credentials: 'include' })
+      await syncEngine.run()
+    } finally {
+      setLoading(false)
+      dismiss()
+    }
+  }
+
   if (!visible) return null
 
   return (
@@ -163,7 +174,7 @@ export function DemoSeedPrompt() {
         <div className="p-5 min-h-[260px]">
           {slide === 'intro' && <IntroSlide />}
           {slide === 'setup' && <SetupSlide />}
-          {slide === 'start' && <StartSlide onSeed={loadDemo} onFresh={dismiss} loading={loading} />}
+          {slide === 'start' && <StartSlide onSeed={loadDemo} onFresh={loadFresh} loading={loading} />}
         </div>
 
         {/* Footer: dots + nav */}
