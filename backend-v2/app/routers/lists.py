@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from ..auth import require_user
 from ..database import get_session_factory, ensure_schema
-from ..models import Doc, List as ListModel, Base
+from ..models import Doc, List as ListModel, DeletionLog, Base
 from ..schemas import ListCreate, ListUpdate, ListResponse
 
 router = APIRouter(prefix="/lists", tags=["lists"])
@@ -92,6 +92,7 @@ def delete_list(list_id: str, user: dict = Depends(require_user)):
         if not lst:
             raise HTTPException(404, "List not found")
         db.query(Doc).filter(Doc.list_id == list_id).update({"list_id": None, "updated_at": _now()})
+        db.add(DeletionLog(id=list_id, item_type="list", deleted_at=_now()))
         db.delete(lst)
         db.commit()
     finally:

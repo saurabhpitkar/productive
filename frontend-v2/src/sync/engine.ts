@@ -26,15 +26,21 @@ class SyncEngine {
 
   async start(userId: string) {
     this.currentUserId = userId
-    // If a different user logged in, wipe local DB so stale data never shows
     const meta = await db.syncMeta.get('main')
     if (meta?.user_id && meta.user_id !== userId) {
+      // Different user: wipe everything so stale data never shows
       await db.transaction('rw', db.docs, db.lists, db.syncMeta, db.outbox, async () => {
         await db.docs.clear()
         await db.lists.clear()
         await db.outbox.clear()
         await db.syncMeta.clear()
       })
+    } else {
+      // Same user (or first login): drop syncMeta so delta() falls through to
+      // fullLoad(), which clears docs/lists and re-fetches from the server.
+      // This guarantees server-state wins on every login — delta runs every
+      // 30 s while the app is active, but start() is only called on login.
+      await db.syncMeta.delete('main')
     }
     db.outbox.filter(e => e.failed === true)
       .modify({ failed: false, attempt_count: 0 })
@@ -87,10 +93,12 @@ class SyncEngine {
     const meta = await db.syncMeta.get('main')
     if (!meta) return this.fullLoad()
 
-    const { docs, lists } = await api.delta(meta.last_sync_at)
+    const { docs, lists, deleted_doc_ids, deleted_list_ids } = await api.delta(meta.last_sync_at)
     await db.transaction('rw', db.docs, db.lists, db.syncMeta, async () => {
-      if (docs.length)  await db.docs.bulkPut(docs)
-      if (lists.length) await db.lists.bulkPut(lists)
+      if (docs.length)               await db.docs.bulkPut(docs)
+      if (lists.length)              await db.lists.bulkPut(lists)
+      if (deleted_doc_ids?.length)   await db.docs.bulkDelete(deleted_doc_ids)
+      if (deleted_list_ids?.length)  await db.lists.bulkDelete(deleted_list_ids)
       await db.syncMeta.put({ key: 'main', last_sync_at: new Date().toISOString() })
     })
   }
@@ -218,11 +226,20 @@ export async function createList(name: string): Promise<DocList> {
   return list
 }
 
-export async function deleteList(id: string) {
+export async function renameList(id: string, name: string) {
+  const trimmed = name.trim()
+  if (!trimmed) return
+  await db.lists.update(id, { list_name: trimmed })
+  await api.updateList(id, { list_name: trimmed })
+  syncEngine.run()
+}
+
+export async function deleteList(id: string, deleteAssociatedDocs = false) {
+  if (deleteAssociatedDocs) {
+    const memberIds = (await db.docs.where('list_id').equals(id).primaryKeys()) as string[]
+    for (const docId of memberIds) await deleteDoc(docId)
+  }
   await db.lists.delete(id)
-  // unassign docs locally
-  const affected = await db.docs.where('list_id').equals(id).toArray()
-  await db.docs.bulkPut(affected.map(d => ({ ...d, list_id: null, updated_at: now() })))
   await api.deleteList(id)
-  await syncEngine.run()
+  syncEngine.run()
 }

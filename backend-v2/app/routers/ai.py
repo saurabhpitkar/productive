@@ -22,7 +22,7 @@ from sqlalchemy import or_
 from ..auth import require_user
 from ..crypto import encrypt_key, decrypt_key, mask_key
 from ..database import get_session_factory, ensure_schema
-from ..models import AiContext, UserSettings, Doc, DocLink, AiUsage, HitlReview, Base
+from ..models import AiContext, UserSettings, Doc, DocLink, AiUsage, HitlReview, DeletionLog, Base
 from ..models import List as ListModel
 from ..schemas import _extract_outline
 
@@ -192,6 +192,23 @@ WORKSPACE_TOOLS = [
             "type": "object",
             "properties": {
                 "doc_id": {"type": "string"},
+            },
+            "required": ["doc_id"],
+        },
+    },
+    {
+        "name": "delete_doc",
+        "description": (
+            "Permanently delete a doc. "
+            "Only use when the user explicitly confirms they want to delete. "
+            "This cannot be undone. "
+            "When deleting multiple docs (e.g. all docs with a given status), "
+            "call list_docs first to get the IDs, then call delete_doc once per doc."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "doc_id": {"type": "string", "description": "ID of the doc to delete"},
             },
             "required": ["doc_id"],
         },
@@ -396,6 +413,30 @@ def _execute_tool(
             db.add(lst)
             db.commit()
             return json.dumps({"ok": True, "list_id": lst.id, "list_name": lst.list_name})
+
+    if tool_name == "delete_doc":
+        if auth_method == "pat" and not pat_trusted:
+            return json.dumps({"error": "Untrusted API tokens cannot delete docs"})
+        doc_id = tool_input.get("doc_id")
+        with SessionLocal() as db:
+            doc = db.query(Doc).filter(Doc.id == doc_id).first()
+            if not doc:
+                return json.dumps({"error": f"Doc {doc_id} not found"})
+            doc_name = doc.name
+            affected_ids = [
+                row[0] for row in
+                db.query(DocLink.source_doc_id)
+                  .filter(DocLink.target_doc_id == doc_id)
+                  .all()
+            ]
+            if affected_ids:
+                db.query(Doc).filter(Doc.id.in_(affected_ids)).update(
+                    {"updated_at": ts}, synchronize_session=False
+                )
+            db.add(DeletionLog(id=doc_id, item_type="doc", deleted_at=ts))
+            db.delete(doc)
+            db.commit()
+        return json.dumps({"ok": True, "deleted_doc_id": doc_id, "name": doc_name})
 
     if tool_name == "get_linked_docs":
         root_id   = tool_input.get("doc_id")

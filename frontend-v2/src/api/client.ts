@@ -17,7 +17,7 @@ async function req<T>(path: string, opts: RequestInit = {}): Promise<T> {
 }
 
 export interface PaginatedDocs { items: Doc[]; total: number; limit: number; offset: number }
-export interface DeltaResponse  { docs: Doc[];  lists: DocList[]; synced_at: string }
+export interface DeltaResponse  { docs: Doc[];  lists: DocList[]; deleted_doc_ids: string[]; deleted_list_ids: string[]; synced_at: string }
 
 export const api = {
   // ── Docs ───────────────────────────────────────────────────────────────────

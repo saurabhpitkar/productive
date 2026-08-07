@@ -12,7 +12,7 @@ from pydantic import BaseModel as PydanticBase
 
 from ..auth import require_user
 from ..database import get_session_factory, ensure_schema
-from ..models import Doc, DocLink, HitlReview, Base, LINK_LABELS
+from ..models import Doc, DocLink, HitlReview, DeletionLog, Base, LINK_LABELS
 from ..schemas import DocCreate, DocUpdate, DocResponse, PaginatedDocs, LinkCreate, _extract_outline
 
 
@@ -214,6 +214,7 @@ def delete_doc(doc_id: str, user: dict = Depends(require_user)):
             db.query(Doc).filter(Doc.id.in_(affected_ids)).update(
                 {"updated_at": _now()}, synchronize_session=False
             )
+        db.add(DeletionLog(id=doc_id, item_type="doc", deleted_at=_now()))
         db.delete(doc)
         db.commit()
     finally:

@@ -140,7 +140,7 @@ export function DocPanel({ docId, onClose }: Props) {
   const [linkLabels,    setLinkLabels]   = useState<Record<string, LinkLabel>>({})
   const [backlinks,     setBacklinks]    = useState<Doc[]>([])
   const [linkSearch,    setLinkSearch]   = useState('')
-  const [linkFilter,    setLinkFilter]   = useState<'all' | 'today' | 'not_done'>('all')
+  const [linkFilter,    setLinkFilter]   = useState<'all' | 'today' | 'not_done'>('not_done')
   const [linkListFilter, setLinkListFilter] = useState('')
   const [graphOpen,     setGraphOpen]     = useState(true)
   const [listOpen,      setListOpen]      = useState(false)
@@ -174,14 +174,6 @@ export function DocPanel({ docId, onClose }: Props) {
     setGraphOpen(true); setListOpen(false); setNoteOpen(false); setHitlRequired(false)
   }, [docId])
 
-  // If a stored docId doesn't exist in Dexie (stale from localStorage), close panel
-  useEffect(() => {
-    if (!docId || isNew) return
-    const timer = setTimeout(() => {
-      if (!initialized.current) onClose()
-    }, 800)
-    return () => clearTimeout(timer)
-  }, [docId, isNew, onClose])
 
   // Prefill from doc once it loads
   useEffect(() => {
@@ -264,6 +256,7 @@ export function DocPanel({ docId, onClose }: Props) {
   const today = new Date().toISOString().slice(0, 10)
   const otherDocs = (allDocs ?? []).filter(d => d.id !== docId)
   const filteredLinks = otherDocs.filter(d => {
+    if (linkedIds.includes(d.id)) return true  // always show already-linked docs regardless of filter
     if (linkSearch && !d.name.toLowerCase().includes(linkSearch.toLowerCase())) return false
     if (linkFilter === 'today' && d.updated_at.slice(0, 10) !== today) return false
     if (linkFilter === 'not_done' && ['done', 'cancelled', 'archived'].includes(d.status)) return false
@@ -502,7 +495,7 @@ export function DocPanel({ docId, onClose }: Props) {
                 : 'bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'
             }`}
           >
-            {f === 'all' ? 'All' : f === 'today' ? 'Updated today' : 'Not done'}
+            {f === 'all' ? 'All' : f === 'today' ? 'Updated today' : 'Active'}
           </button>
         ))}
         {(allLists ?? []).length > 0 && (

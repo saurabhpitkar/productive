@@ -164,6 +164,8 @@ class HitlReviewResponse(BaseModel):
 # ── Sync ──────────────────────────────────────────────────────────────────────
 
 class DeltaSyncResponse(BaseModel):
-    docs:      List[DocResponse]
-    lists:     List[ListResponse]
-    synced_at: str
+    docs:             List[DocResponse]
+    lists:            List[ListResponse]
+    deleted_doc_ids:  List[str] = []
+    deleted_list_ids: List[str] = []
+    synced_at:        str

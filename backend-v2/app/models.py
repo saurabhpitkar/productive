@@ -89,6 +89,15 @@ class HitlReview(Base):
     resolved_at      = Column(String, nullable=True)
 
 
+class DeletionLog(Base):
+    """Tombstone table: records hard-deleted docs and lists so delta sync can propagate deletions."""
+    __tablename__ = "deletion_log"
+
+    id         = Column(String, primary_key=True)   # UUID of the deleted item
+    item_type  = Column(String, nullable=False)      # "doc" or "list"
+    deleted_at = Column(String, nullable=False)      # ISO timestamp
+
+
 class AiContext(Base):
     """Named text blocks injected into the AI system prompt."""
     __tablename__ = "ai_context"

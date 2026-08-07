@@ -1,5 +1,7 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { updateDoc, deleteDoc } from '../sync/engine'
+import { ConfirmDialog } from './ConfirmDialog'
+import { useUIStore } from '../store/ui'
 import type { Doc } from '../types'
 
 
@@ -21,9 +23,12 @@ interface Props {
 
 export function DocContextMenu({ doc, x, y, onClose, onEdit, onUpdateDue, onCreateLinked }: Props) {
   const menuRef = useRef<HTMLDivElement>(null)
+  const [showConfirm, setShowConfirm] = useState(false)
+  const { panelDocId, closePanel } = useUIStore()
 
-  // Close on outside click, scroll, or Escape
+  // Close on outside click / Escape — suppressed while confirm dialog is open
   useEffect(() => {
+    if (showConfirm) return
     const close = () => onClose()
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
     window.addEventListener('mousedown', close)
@@ -36,7 +41,7 @@ export function DocContextMenu({ doc, x, y, onClose, onEdit, onUpdateDue, onCrea
       window.removeEventListener('scroll', close, true)
       window.removeEventListener('keydown', onKey)
     }
-  }, [onClose])
+  }, [onClose, showConfirm])
 
   // Clamp to viewport so menu never goes off-screen
   const menuW  = 220
@@ -70,34 +75,48 @@ export function DocContextMenu({ doc, x, y, onClose, onEdit, onUpdateDue, onCrea
     await updateDoc(doc.id, { flag: !doc.flag })
   }
 
-  const handleDelete = async () => {
+  const handleConfirmDelete = async () => {
+    setShowConfirm(false)
     onClose()
-    if (!confirm(`Delete "${doc.name}"? This cannot be undone.`)) return
+    if (panelDocId === doc.id) closePanel()
     await deleteDoc(doc.id)
   }
 
   return (
-    <div
-      ref={menuRef}
-      style={{ position: 'fixed', top: safeY, left: safeX, zIndex: 250, width: menuW }}
-      className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-700 shadow-2xl p-1.5"
-      onMouseDown={e => e.stopPropagation()}
-      onTouchStart={e => e.stopPropagation()}
-    >
-      <p className="px-3 py-1.5 text-xs text-gray-400 dark:text-gray-500 truncate border-b border-gray-100 dark:border-gray-800 mb-1">
-        {doc.name}
-      </p>
+    <>
+      <div
+        ref={menuRef}
+        style={{ position: 'fixed', top: safeY, left: safeX, zIndex: 250, width: menuW }}
+        className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-700 shadow-2xl p-1.5"
+        onMouseDown={e => e.stopPropagation()}
+        onTouchStart={e => e.stopPropagation()}
+      >
+        <p className="px-3 py-1.5 text-xs text-gray-400 dark:text-gray-500 truncate border-b border-gray-100 dark:border-gray-800 mb-1">
+          {doc.name}
+        </p>
 
-      {item('Edit / View', <EditIcon />, () => { onClose(); onEdit() })}
-      {item('Create linked doc', <LinkPlusIcon />, () => { onClose(); onCreateLinked() })}
-      {item('Update due date/time', <CalendarIcon />, () => { onClose(); onUpdateDue() })}
-      {item('Due tomorrow same time', <TomorrowIcon />, handleDueTomorrow)}
-      {item(doc.flag ? 'Unflag' : 'Flag', <FlagIcon />, handleToggleFlag)}
+        {item('Edit / View', <EditIcon />, () => { onClose(); onEdit() })}
+        {item('Create linked doc', <LinkPlusIcon />, () => { onClose(); onCreateLinked() })}
+        {item('Update due date/time', <CalendarIcon />, () => { onClose(); onUpdateDue() })}
+        {item('Due tomorrow same time', <TomorrowIcon />, handleDueTomorrow)}
+        {item(doc.flag ? 'Unflag' : 'Flag', <FlagIcon />, handleToggleFlag)}
 
-      <div className="border-t border-gray-100 dark:border-gray-800 mt-1 pt-1">
-        {item('Delete', <TrashIcon />, handleDelete, true)}
+        <div className="border-t border-gray-100 dark:border-gray-800 mt-1 pt-1">
+          {item('Delete', <TrashIcon />, () => setShowConfirm(true), true)}
+        </div>
       </div>
-    </div>
+
+      {showConfirm && (
+        <ConfirmDialog
+          title="Delete doc"
+          message={`"${doc.name}" will be permanently deleted. This cannot be undone.`}
+          confirmLabel="Delete"
+          danger
+          onConfirm={handleConfirmDelete}
+          onCancel={() => setShowConfirm(false)}
+        />
+      )}
+    </>
   )
 }
 
