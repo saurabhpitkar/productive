@@ -1,6 +1,6 @@
 ﻿# Productive
 
-An AI-augmented personal knowledge graph. Write docs, link them together, and let AI agents read and write your knowledge - with you staying in control.
+An AI-augmented personal knowledge graph. Write docs, link them together, and let AI agents read and write your knowledge.
 
 ---
 
