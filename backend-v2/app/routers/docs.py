@@ -233,6 +233,13 @@ def add_link(doc_id: str, body: LinkCreate, user: dict = Depends(require_user)):
             raise HTTPException(404, "Target doc not found")
         if body.label not in LINK_LABELS:
             raise HTTPException(400, f"Label must be one of: {', '.join(LINK_LABELS)}")
+        if body.label == 'up':
+            existing_up = db.query(DocLink).filter(
+                DocLink.source_doc_id == doc_id,
+                DocLink.label == 'up',
+            ).first()
+            if existing_up and existing_up.target_doc_id != body.target_doc_id:
+                raise HTTPException(400, "A doc can only have one 'up' link (one parent). Remove the existing parent link first.")
         existing = db.query(DocLink).filter(
             DocLink.source_doc_id == doc_id,
             DocLink.target_doc_id == body.target_doc_id,
@@ -289,13 +296,16 @@ def get_doc_links(doc_id: str, user: dict = Depends(require_user)):
 
 
 @router.get("/{doc_id}/backlinks", response_model=List[DocResponse])
-def get_backlinks(doc_id: str, user: dict = Depends(require_user)):
-    """Return all docs that link TO this doc (reverse links)."""
+def get_backlinks(doc_id: str, label: Optional[str] = None, user: dict = Depends(require_user)):
+    """Return all docs that link TO this doc (reverse links). Optional ?label= filter."""
     db = _get_db(user)
     try:
-        links  = db.query(DocLink).filter(DocLink.target_doc_id == doc_id).all()
-        ids    = [l.source_doc_id for l in links]
-        docs   = db.query(Doc).filter(Doc.id.in_(ids)).all()
+        q = db.query(DocLink).filter(DocLink.target_doc_id == doc_id)
+        if label:
+            q = q.filter(DocLink.label == label)
+        links = q.all()
+        ids   = [l.source_doc_id for l in links]
+        docs  = db.query(Doc).filter(Doc.id.in_(ids)).all()
         return [DocResponse.from_doc(d) for d in docs]
     finally:
         db.close()

@@ -138,7 +138,9 @@ export function DocPanel({ docId, onClose }: Props) {
   const [linkedIds,     setLinkedIds]    = useState<string[]>([])
   const [wikiLinkedIds, setWikiLinkedIds]= useState<Set<string>>(new Set())
   const [linkLabels,    setLinkLabels]   = useState<Record<string, LinkLabel>>({})
-  const [backlinks,     setBacklinks]    = useState<Doc[]>([])
+  const [backlinks,        setBacklinks]        = useState<Doc[]>([])
+  const [upChildIds,       setUpChildIds]       = useState<string[]>([])
+  const [reqParentIds,     setReqParentIds]     = useState<string[]>([])
   const [linkSearch,    setLinkSearch]   = useState('')
   const [linkFilter,    setLinkFilter]   = useState<'all' | 'today' | 'not_done'>('not_done')
   const [linkListFilter, setLinkListFilter] = useState('')
@@ -197,14 +199,21 @@ export function DocPanel({ docId, onClose }: Props) {
   useEffect(() => {
     if (!docId) return
     let cancelled = false
-    Promise.all([api.getLinks(docId), api.getBacklinks(docId)]).then(([links, bl]) => {
+    Promise.all([
+      api.getLinks(docId),
+      api.getBacklinks(docId),
+      api.getBacklinks(docId, 'up'),
+      api.getBacklinks(docId, 'requires'),
+    ]).then(([links, bl, upChildren, reqParents]) => {
       if (cancelled) return
       const labels: Record<string, LinkLabel> = {}
       for (const l of links) labels[l.target_doc_id] = l.label
       setLinkLabels(labels)
       setBacklinks(bl)
-      // All linked docs: collapsed when hierarchy links exist (flow map is more useful)
+      setUpChildIds(upChildren.map(d => d.id))
+      setReqParentIds(reqParents.map(d => d.id))
       const hasHierarchy = links.some(l => l.label === 'requires' || l.label === 'up')
+        || upChildren.length > 0 || reqParents.length > 0
       setListOpen(!hasHierarchy)
     }).catch(() => {})
     return () => { cancelled = true }
@@ -264,9 +273,26 @@ export function DocPanel({ docId, onClose }: Props) {
     return true
   })
 
-  const graphL1Links = linkedIds
-    .filter(id => linkLabels[id] === 'requires' || linkLabels[id] === 'up')
-    .map(id => ({ id, label: linkLabels[id] as 'requires' | 'up' }))
+  const upChildIdSet = new Set(upChildIds)
+
+  // parentLinks: docs shown above current in the flow map
+  //   - outgoing 'up' links (current declared its own parent)
+  //   - backlinks from docs that 'requires' current (those docs depend on current)
+  const graphParentLinks = [
+    // 'up' outgoing links — but exclude any doc that is ALSO an up-child (backlink wins: they're a child, not a parent)
+    ...linkedIds.filter(id => linkLabels[id] === 'up' && !upChildIdSet.has(id)).map(id => ({ id, label: 'up' as const })),
+    // docs that 'require' current doc — again exclude up-children
+    ...reqParentIds.filter(id => !linkedIds.includes(id) && !upChildIdSet.has(id)).map(id => ({ id, label: 'requires' as const })),
+  ]
+  // childLinks: docs shown below current in the flow map
+  //   - outgoing 'requires' links (current depends on these)
+  //   - backlinks from docs that have 'up' → current (those are sub-docs)
+  const graphChildLinks = [
+    // 'requires' children that are NOT also up-children (up takes priority)
+    ...linkedIds.filter(id => linkLabels[id] === 'requires' && !upChildIdSet.has(id)).map(id => ({ id, label: 'requires' as const })),
+    // all up-children (solid line, no arrow) — even if also in linkedIds
+    ...upChildIds.map(id => ({ id, label: 'up' as const })),
+  ]
 
   const handleCreateLinkedDoc = async () => {
     if (!docId) return
@@ -316,6 +342,15 @@ export function DocPanel({ docId, onClose }: Props) {
   }, [body])
 
   const handleLabelChange = async (targetId: string, label: LinkLabel) => {
+    if (label === 'up' && docId) {
+      // Only one parent allowed — auto-remove any existing 'up' link to a different doc
+      const existingUpId = linkedIds.find(id => id !== targetId && linkLabels[id] === 'up')
+      if (existingUpId) {
+        setLinkedIds(ids => ids.filter(id => id !== existingUpId))
+        setLinkLabels(prev => { const n = { ...prev }; delete n[existingUpId]; return n })
+        await removeLink(docId, existingUpId)
+      }
+    }
     setLinkLabels(prev => ({ ...prev, [targetId]: label }))
     if (docId && linkedIds.includes(targetId)) {
       await addLink(docId, targetId, label)
@@ -632,13 +667,14 @@ export function DocPanel({ docId, onClose }: Props) {
 
         {/* 4. Linked Docs */}
         <Section title="Linked docs" defaultOpen={true} badge={linkedIds.length}>
-          {!isNew && graphL1Links.length > 0 && (
+          {!isNew && (graphParentLinks.length > 0 || graphChildLinks.length > 0) && (
             <SubSection title="Flow map" open={graphOpen} onToggle={() => setGraphOpen(v => !v)}>
               <DocLinkGraph
                 docId={docId!}
                 docName={name}
                 docStatus={status}
-                l1Links={graphL1Links}
+                parentLinks={graphParentLinks}
+                childLinks={graphChildLinks}
                 onDocClick={openPanel}
                 compact
                 className="mb-1"
@@ -682,13 +718,14 @@ export function DocPanel({ docId, onClose }: Props) {
             {detailsFields}
           </Section>
           <Section title="Linked docs" defaultOpen={true} badge={linkedIds.length}>
-            {!isNew && graphL1Links.length > 0 && (
+            {!isNew && (graphParentLinks.length > 0 || graphChildLinks.length > 0) && (
               <SubSection title="Flow map" open={graphOpen} onToggle={() => setGraphOpen(v => !v)}>
                 <DocLinkGraph
                   docId={docId!}
                   docName={name}
                   docStatus={status}
-                  l1Links={graphL1Links}
+                  parentLinks={graphParentLinks}
+                  childLinks={graphChildLinks}
                   onDocClick={openPanel}
                   className="mb-1"
                 />

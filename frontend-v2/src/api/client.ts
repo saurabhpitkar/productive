@@ -32,7 +32,7 @@ export const api = {
   addLink:      (src: string, tgt: string, label = 'related_to') => req<void>(`/docs/${src}/links`, { method: 'POST', body: JSON.stringify({ target_doc_id: tgt, label }) }),
   getAllLinks:   () => req<StoredLink[]>('/docs/all-links'),
   getLinks:     (id: string) => req<DocLinkInfo[]>(`/docs/${id}/links`),
-  getBacklinks: (id: string) => req<Doc[]>(`/docs/${id}/backlinks`),
+  getBacklinks: (id: string, label?: string) => req<Doc[]>(`/docs/${id}/backlinks${label ? `?label=${label}` : ''}`),
   removeLink:   (src: string, tgt: string)           => req<void>(`/docs/${src}/links/${tgt}`, { method: 'DELETE' }),
 
   // ── Lists ──────────────────────────────────────────────────────────────────
