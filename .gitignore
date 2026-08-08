@@ -1,7 +1,7 @@
 # Secrets — never commit
 .env
 
-# Per-user databases and live data
+# Per-user data and live databases
 data/
 *.db
 *.db-shm
@@ -15,9 +15,6 @@ cloudflared/*.json
 *.key
 *.crt
 
-# Claude Code project state
-.claude/
-
 # Python
 __pycache__/
 *.pyc
@@ -26,11 +23,15 @@ __pycache__/
 .venv/
 venv/
 .pytest_cache/
+.mypy_cache/
 
 # Node / frontend build
 node_modules/
 dist/
 .turbo/
+
+# Rust build artifacts
+target/
 
 # macOS
 .DS_Store
@@ -41,8 +42,12 @@ dist/
 # Docker override for local dev (machine-specific, not for repo)
 docker-compose.override.yml
 
+# Claude Code project state
+.claude/
+
 # Operational and internal docs — not for contributors
 system.md
 CLAUDE.md
 constraints.md
 launch-prep/
+

@@ -1,0 +1,82 @@
+services:
+
+  # ──────────────────────────────────────────────────────────────────────────────
+  # V3 — Rust backend + React frontend + Python MCP server
+  # ──────────────────────────────────────────────────────────────────────────────
+  backend-v3:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      DATA_DIR: /data/v3
+      BIND: 0.0.0.0:8000
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-http://localhost:3003/api/v1/auth/callback}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-change-me-generate-with-openssl-rand-hex-32}
+      FERNET_KEY: ${FERNET_KEY:-}
+      APP_ORIGIN_V3: ${APP_ORIGIN_V3:-http://localhost:3003}
+      ALLOWED_EMAILS: ${ALLOWED_EMAILS:-}
+      RUST_LOG: ${RUST_LOG:-info}
+    volumes:
+      - productive-data-v3:/data/v3
+    networks:
+      - productive-net-v3
+
+  frontend-v3:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_SYNC_INTERVAL_MS: ${VITE_SYNC_INTERVAL_MS:-180000}
+    restart: unless-stopped
+    ports:
+      - "3003:3003"
+    networks:
+      - productive-net-v3
+    depends_on:
+      - backend-v3
+
+  mcp-server-v3:
+    build: ./mcp-server
+    restart: unless-stopped
+    environment:
+      PRODUCTIVE_API_URL: http://backend-v3:8000
+      PRODUCTIVE_PAT: ${MCP_PAT:-}
+      MCP_TRANSPORT: ${MCP_TRANSPORT:-sse}
+      MCP_PORT: ${MCP_PORT:-3004}
+    ports:
+      - "3004:3004"
+    networks:
+      - productive-net-v3
+    depends_on:
+      - backend-v3
+
+  cloudflared-v3:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN_V3}
+    user: "65532:65532"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN_V3}
+    networks:
+      - productive-net-v3
+    depends_on:
+      - frontend-v3
+
+volumes:
+  productive-data-v3:
+
+networks:
+  productive-net-v3:
+    driver: bridge

@@ -1,0 +1,99 @@
+name: productive
+
+services:
+
+  # ──────────────────────────────────────────────────────────────────────────────
+  # V2
+  # ──────────────────────────────────────────────────────────────────────────────
+  backend-v2:
+    build:
+      context: ./backend
+      target: base
+    restart: unless-stopped
+    environment:
+      DATABASE_DIR: /data/users
+      ATTACHMENTS_DIR: /attachments
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-http://localhost:3001/api/v1/auth/callback}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-change-me-generate-with-openssl-rand-hex-32}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
+      APP_ORIGIN_V2: ${APP_ORIGIN_V2:-http://localhost:3001}
+      ALLOWED_EMAILS: ${ALLOWED_EMAILS:-}    # comma-separated allow-list; empty = allow all
+    volumes:
+      - sqlite-data-v2:/data
+      - attachments-v2:/attachments
+    networks:
+      - productive-net-v2
+
+  frontend-v2:
+    build:
+      context: ./frontend
+      args:
+        VITE_SYNC_INTERVAL_MS: ${VITE_SYNC_INTERVAL_MS:-180000}
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    networks:
+      - productive-net-v2
+    depends_on:
+      - backend-v2
+
+  mcp-server:
+    build: ./mcp-server
+    restart: unless-stopped
+    environment:
+      PRODUCTIVE_API_URL: http://backend-v2:8000
+      PRODUCTIVE_PAT: ${MCP_PAT:-}
+      MCP_TRANSPORT: ${MCP_TRANSPORT:-sse}
+      MCP_PORT: ${MCP_PORT:-3002}
+    ports:
+      - "3002:3002"
+    networks:
+      - productive-net-v2
+    depends_on:
+      - backend-v2
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
+    user: "65532:65532"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
+    networks:
+      - productive-net-v2
+    depends_on:
+      - frontend-v2
+
+  backend-v2-test:
+    build:
+      context: ./backend
+      target: test
+    environment:
+      DATABASE_DIR: /tmp/test_dbs
+      JWT_SECRET_KEY: test-jwt-secret-do-not-use-in-prod
+      ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      ALLOWED_EMAILS: ""
+      APP_ORIGIN_V2: http://localhost:3001
+      GOOGLE_CLIENT_ID: test
+      GOOGLE_CLIENT_SECRET: test
+    profiles:
+      - test
+
+volumes:
+  sqlite-data-v2:
+  attachments-v2:
+
+networks:
+  productive-net-v2:
+    driver: bridge
