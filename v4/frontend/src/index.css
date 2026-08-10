@@ -1,0 +1,46 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    -webkit-tap-highlight-color: transparent;
+  }
+  /* Prevent iOS auto-zoom on input focus (font-size must be ≥16px) */
+  input, textarea, select {
+    font-size: 16px;
+  }
+}
+
+@layer utilities {
+  .pt-safe { padding-top: env(safe-area-inset-top); }
+  .pb-safe { padding-bottom: env(safe-area-inset-bottom); }
+  .pl-safe { padding-left: env(safe-area-inset-left); }
+  .pr-safe { padding-right: env(safe-area-inset-right); }
+  .mt-safe { margin-top: env(safe-area-inset-top); }
+}
+
+@layer components {
+  .md-preview { @apply text-sm text-gray-800 dark:text-gray-200 leading-relaxed; }
+  .md-preview h1 { @apply text-xl font-bold mt-4 mb-2; }
+  .md-preview h2 { @apply text-lg font-semibold mt-3 mb-1; }
+  .md-preview h3 { @apply text-base font-semibold mt-2 mb-1; }
+  .md-preview h4 { @apply text-sm font-semibold mt-2 mb-1; }
+  .md-preview h5 { @apply text-sm font-medium mt-1.5 mb-0.5 text-gray-700 dark:text-gray-300; }
+  .md-preview h6 { @apply text-xs font-semibold uppercase tracking-wide mt-1.5 mb-0.5 text-gray-500 dark:text-gray-400; }
+  .md-preview p  { @apply mb-2; }
+  .md-preview ul { @apply list-disc pl-5 mb-2; }
+  .md-preview ol { @apply list-decimal pl-5 mb-2; }
+  .md-preview li { @apply mb-0.5; }
+  .md-preview strong { @apply font-semibold; }
+  .md-preview em { @apply italic; }
+  .md-preview del { @apply line-through text-gray-400 dark:text-gray-500; }
+  .md-preview code { @apply font-mono text-xs bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded; }
+  .md-preview pre  { @apply bg-gray-100 dark:bg-gray-800 rounded-lg p-3 overflow-x-auto mb-2; }
+  .md-preview pre code { @apply bg-transparent p-0; }
+  .md-preview blockquote { @apply border-l-4 border-gray-300 dark:border-gray-600 pl-3 italic text-gray-600 dark:text-gray-400 mb-2; }
+  .md-preview hr { @apply border-gray-200 dark:border-gray-700 my-4; }
+  .md-preview a { @apply text-indigo-600 dark:text-indigo-400 underline; }
+  .md-preview .wiki-link { @apply text-indigo-600 dark:text-indigo-400 underline font-medium cursor-pointer; }
+  .md-preview .wiki-link-miss { @apply text-red-500 dark:text-red-400; }
+}

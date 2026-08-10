@@ -1,0 +1,93 @@
+services:
+
+  # ──────────────────────────────────────────────────────────────────────────────
+  # V4 — Rust backend + React frontend + Python MCP server
+  # ──────────────────────────────────────────────────────────────────────────────
+  backend-v4:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      DATA_DIR: /data/v4
+      # When HOST_DOCS_DIR is set, DOCS_DIR points to the bind-mounted folder.
+      # Leave DOCS_DIR unset to use the internal Docker volume (default).
+      DOCS_DIR: ${HOST_DOCS_DIR:+/data/docs}
+      BIND: 0.0.0.0:8000
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-http://localhost:3005/api/v1/auth/callback}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-change-me-generate-with-openssl-rand-hex-32}
+      FERNET_KEY: ${FERNET_KEY:-}
+      APP_ORIGIN_V4: ${APP_ORIGIN_V4:-http://localhost:3005}
+      ALLOWED_EMAILS: ${ALLOWED_EMAILS:-}
+      ROUTE_THRESHOLD: ${ROUTE_THRESHOLD:-0.80}
+      RUST_LOG: ${RUST_LOG:-info}
+    volumes:
+      - productive-data-v4:/data/v4
+      # Optional: mount a local folder as your docs directory.
+      # Set HOST_DOCS_DIR in .env to activate (e.g. HOST_DOCS_DIR=/Users/you/Documents/notes).
+      # Windows:  HOST_DOCS_DIR=C:/Users/YourName/Documents/my-notes
+      # Mac/Linux: HOST_DOCS_DIR=/Users/YourName/Documents/my-notes
+      - ${HOST_DOCS_DIR:-productive-docs-placeholder}:/data/docs
+    networks:
+      - productive-net-v4
+
+  frontend-v4:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_SYNC_INTERVAL_MS: ${VITE_SYNC_INTERVAL_MS:-180000}
+    restart: unless-stopped
+    ports:
+      - "3005:3005"
+    networks:
+      - productive-net-v4
+    depends_on:
+      - backend-v4
+
+  mcp-server-v4:
+    build: ./mcp-server
+    restart: unless-stopped
+    environment:
+      PRODUCTIVE_API_URL: http://backend-v4:8000
+      PRODUCTIVE_PAT: ${MCP_PAT:-}
+      MCP_TRANSPORT: ${MCP_TRANSPORT:-sse}
+      MCP_PORT: ${MCP_PORT:-3006}
+    ports:
+      - "3006:3006"
+    networks:
+      - productive-net-v4
+    depends_on:
+      - backend-v4
+
+  cloudflared-v4:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN_V4}
+    user: "65532:65532"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN_V4}
+    networks:
+      - productive-net-v4
+    depends_on:
+      - frontend-v4
+
+volumes:
+  productive-data-v4:
+  # Placeholder used when HOST_DOCS_DIR is not set — docs stay inside the Docker volume.
+  productive-docs-placeholder:
+
+networks:
+  productive-net-v4:
+    driver: bridge

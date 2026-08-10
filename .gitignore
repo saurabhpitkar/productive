@@ -47,6 +47,7 @@ docker-compose.override.yml
 
 # Operational and internal docs — not for contributors
 system.md
+ai-flows.md
 CLAUDE.md
 constraints.md
 launch-prep/
