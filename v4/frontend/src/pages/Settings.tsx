@@ -10,6 +10,7 @@ import type { AiSettings, AiModel, UsageResponse } from '../lib/ai'
 import { fetchTokens, createToken, revokeToken, setTokenTrusted } from '../lib/tokens'
 import type { ApiToken, NewTokenResponse } from '../lib/tokens'
 import { api } from '../api/client'
+import { syncEngine } from '../sync/engine'
 import type { LinkSettings } from '../types'
 
 // Published list prices per 1M tokens (approximate; update as providers change)
@@ -724,6 +725,7 @@ function StorageSection() {
       setRebuildStatus('Rebuilding knowledge graph…')
       const r = await api.rebuildKg()
       setRebuildStatus(`Done — ${r.docs_scanned} docs scanned, ${r.embeddings_updated} embeddings updated.`)
+      syncEngine.invalidate()
     } catch (e) {
       setPathError(e instanceof Error ? e.message : 'Failed to save path')
     } finally {
@@ -1070,6 +1072,7 @@ function KgRebuildCard() {
     try {
       const r = await api.rebuildKg() as KgRebuildResult
       setResult(r)
+      syncEngine.invalidate()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Rebuild failed')
     } finally {

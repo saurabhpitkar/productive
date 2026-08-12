@@ -55,6 +55,14 @@ class SyncEngine {
     this.timer = null
   }
 
+  /** Drop the sync cursor and do a full reload from the server.
+   *  Call this after any server-side bulk operation (rebuild KG, import)
+   *  so stale delta cursors don't hide the changes. */
+  async invalidate() {
+    await db.syncMeta.delete('main')
+    this.run()
+  }
+
   /** Called from App.tsx on visibilitychange - switches between active/background intervals. */
   onVisibilityChange() {
     if (document.visibilityState === 'visible') this.run()
@@ -107,10 +115,17 @@ class SyncEngine {
     // Don't overwrite docs that still have pending local writes — the outbox
     // for those will be flushed in the next run(), and then delta will pick up
     // the server-confirmed version.
-    const pendingIds = new Set(
-      (await db.outbox.filter(e => !e.failed && e.type === 'update').toArray())
-        .map(e => e.payload.id as string)
-    )
+    // Also protect docs with pending link/unlink entries: if an addLink/removeLink
+    // hasn't been flushed yet, a delta that returns the server's (pre-link) version
+    // of that doc would silently drop the optimistic linked_doc_ids change.
+    const [pendingUpdates, pendingLinks] = await Promise.all([
+      db.outbox.filter(e => !e.failed && e.type === 'update').toArray(),
+      db.outbox.filter(e => !e.failed && (e.type === 'link' || e.type === 'unlink')).toArray(),
+    ])
+    const pendingIds = new Set([
+      ...pendingUpdates.map(e => e.payload.id as string),
+      ...pendingLinks.map(e => e.payload.source_id as string),
+    ])
     const safeDocs = docs.filter(d => !pendingIds.has(d.id))
 
     await db.transaction('rw', db.docs, db.lists, db.syncMeta, async () => {

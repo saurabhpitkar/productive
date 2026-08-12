@@ -529,6 +529,12 @@ pub async fn delete(
     let (path, file_name) = resolve_doc_path(&state, &user.sub, &docs_dir, id)?;
     let doc = file::parse_doc(&path).map_err(|_| err(StatusCode::NOT_FOUND, "doc not found"))?;
 
+    // Collect docs that link TO this doc before removing from index.
+    // We'll proactively strip the dead link from their files so delta sync
+    // propagates the cleanup — otherwise lazy filtering would silently fix
+    // reads but never update updated_at, leaving other clients stale.
+    let backlinking_sources = state.index.backlinks_for(&user.sub, id);
+
     file::delete_doc_file(&docs_dir, &file_name)
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
 
@@ -536,13 +542,34 @@ pub async fn delete(
     git::commit_remove(&user_root, &format!("docs/{}", file_name), &format!("delete: {}", doc.title)).ok();
     state.index.remove(&user.sub, id);
 
+    // Remove dead link from every doc that pointed at the now-deleted doc.
+    for bl in backlinking_sources {
+        if let Some(src_file) = state.index.get_file_name(&user.sub, bl.source_id) {
+            let src_path = docs_dir.join(&src_file);
+            if let Ok(mut src_doc) = file::parse_doc(&src_path) {
+                let before = src_doc.links.len();
+                src_doc.links.retain(|l| l.target_id != id);
+                if src_doc.links.len() < before {
+                    src_doc.updated_at = chrono::Utc::now();
+                    if file::write_doc(&docs_dir, &src_doc, Some(&src_file)).is_ok() {
+                        git::commit_file(
+                            &user_root,
+                            &format!("docs/{}", src_file),
+                            &format!("unlink: removed dead link in {}", src_doc.title),
+                        ).ok();
+                        state.index.upsert(&user.sub, &src_doc, &src_file);
+                    }
+                }
+            }
+        }
+    }
+
     let meta_pool = meta_db::init_user_meta_db(&user_root).await.ok();
     if let Some(pool) = meta_pool {
         let before_snap = serde_json::to_value(DocResponse::from(&doc)).ok();
         let actor = if matches!(user.auth_method, AuthMethod::Cookie) { "human:user" } else { "agent:pat-client" };
         meta_db::log_deletion(&pool, id, "doc").await.ok();
         meta_db::log_activity(&pool, id, "deleted", actor, before_snap.as_ref(), None, None).await.ok();
-        // Remove embedding so deleted docs don't appear in future pairwise comparisons.
         meta_db::delete_embedding(&pool, id).await.ok();
     }
 
