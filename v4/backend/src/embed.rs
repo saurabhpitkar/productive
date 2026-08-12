@@ -182,13 +182,31 @@ pub fn spawn_embed_task(state: Arc<AppState>, user_id: String, doc_id: Uuid, tex
         candidates.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         candidates.truncate(3);
 
+        let docs_dir = state.user_docs_dir(&user_id);
+        let src_doc_opt = state.index.get_file_name(&user_id, doc_id)
+            .map(|f| docs_dir.join(f))
+            .or_else(|| file::find_doc_path(&docs_dir, doc_id))
+            .and_then(|p| file::parse_doc(&p).ok());
+
         for (target_id, confidence) in candidates {
+            let label = if let Some(ref src) = src_doc_opt {
+                let tgt_kw = state.index.get_file_name(&user_id, target_id)
+                    .map(|f| docs_dir.join(&f))
+                    .or_else(|| file::find_doc_path(&docs_dir, target_id))
+                    .and_then(|p| file::parse_doc(&p).ok())
+                    .map(|d| d.vector_keywords)
+                    .unwrap_or_default();
+                crate::store::classify::classify_link_label(&src.body, &src.vector_keywords, &tgt_kw)
+            } else {
+                LinkLabel::RelatedTo
+            };
+
             if confidence >= auto_threshold && !link_settings.links_require_review {
                 crate::routes::inbox::do_link_docs(
-                    &state, &user_id, doc_id, target_id, LinkLabel::RelatedTo, &pool, &session_id,
+                    &state, &user_id, doc_id, target_id, label.clone(), &pool, &session_id, "auto",
                 ).await.ok();
             } else {
-                meta_db::insert_link_proposal(&pool, doc_id, target_id, "related_to", confidence, &session_id).await.ok();
+                meta_db::insert_link_proposal(&pool, doc_id, target_id, &label.to_string(), confidence, &session_id).await.ok();
             }
         }
     });
@@ -340,14 +358,32 @@ pub async fn background_embed_users(state: &Arc<AppState>) {
             candidates.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
             candidates.truncate(3);
 
+            let docs_dir = state.user_docs_dir(&user_id);
+            let src_doc_opt = state.index.get_file_name(&user_id, *doc_id)
+                .map(|f| docs_dir.join(f))
+                .or_else(|| file::find_doc_path(&docs_dir, *doc_id))
+                .and_then(|p| file::parse_doc(&p).ok());
+
             for (target_id, confidence) in candidates {
+                let label = if let Some(ref src) = src_doc_opt {
+                    let tgt_kw = state.index.get_file_name(&user_id, target_id)
+                        .map(|f| docs_dir.join(&f))
+                        .or_else(|| file::find_doc_path(&docs_dir, target_id))
+                        .and_then(|p| file::parse_doc(&p).ok())
+                        .map(|d| d.vector_keywords)
+                        .unwrap_or_default();
+                    crate::store::classify::classify_link_label(&src.body, &src.vector_keywords, &tgt_kw)
+                } else {
+                    LinkLabel::RelatedTo
+                };
+
                 if confidence >= auto_threshold && !link_settings.links_require_review {
                     crate::routes::inbox::do_link_docs(
-                        state, &user_id, *doc_id, target_id, LinkLabel::RelatedTo, &pool, &session_id,
+                        state, &user_id, *doc_id, target_id, label.clone(), &pool, &session_id, "auto",
                     ).await.ok();
                     tracing::debug!("sweep auto-link: {} → {} ({:.2})", doc_id, target_id, confidence);
                 } else {
-                    meta_db::insert_link_proposal(&pool, *doc_id, target_id, "related_to", confidence, &session_id).await.ok();
+                    meta_db::insert_link_proposal(&pool, *doc_id, target_id, &label.to_string(), confidence, &session_id).await.ok();
                     tracing::debug!("sweep link proposal: {} → {} ({:.2})", doc_id, target_id, confidence);
                 }
             }

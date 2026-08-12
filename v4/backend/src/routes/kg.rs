@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use axum::{Json, extract::State, http::StatusCode};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
@@ -24,6 +24,7 @@ pub struct StorageInfo {
     pub mode: String,
     pub docs_container_path: String,
     pub docs_folder_configured: bool,
+    pub custom_docs_path: Option<String>,
 }
 
 pub async fn storage_info(
@@ -31,15 +32,66 @@ pub async fn storage_info(
     user: AuthUser,
 ) -> Json<StorageInfo> {
     let docs_dir = state.user_docs_dir(&user.sub);
+    let custom_path = state.custom_docs_paths.get(&user.sub)
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
     Json(StorageInfo {
         mode: if state.docs_dir.is_some() {
             "local_folder".to_string()
+        } else if !custom_path.is_empty() {
+            "linked_folder".to_string()
         } else {
             "docker_volume".to_string()
         },
         docs_container_path: docs_dir.to_string_lossy().to_string(),
-        docs_folder_configured: state.docs_dir.is_some(),
+        docs_folder_configured: state.docs_dir.is_some() || !custom_path.is_empty(),
+        custom_docs_path: if custom_path.is_empty() { None } else { Some(custom_path) },
     })
+}
+
+#[derive(Deserialize)]
+pub struct UpdateStorageRequest {
+    pub custom_docs_path: Option<String>,
+}
+
+pub async fn update_storage(
+    State(state): State<Arc<AppState>>,
+    user: AuthUser,
+    Json(body): Json<UpdateStorageRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let user_root = state.user_root_dir(&user.sub);
+    let pool = meta_db::init_user_meta_db(&user_root).await.map_err(err500)?;
+    meta_db::upsert_settings_singleton(&pool).await.map_err(err500)?;
+
+    let path = body.custom_docs_path.unwrap_or_default();
+    let path = path.trim().to_string();
+
+    if !path.is_empty() {
+        // Validate that the path is accessible from within the container
+        let p = std::path::PathBuf::from(&path);
+        if !p.exists() {
+            return Err((StatusCode::BAD_REQUEST,
+                format!("Path '{}' does not exist or is not accessible in this environment", path)));
+        }
+        if !p.is_dir() {
+            return Err((StatusCode::BAD_REQUEST,
+                format!("'{}' is not a directory", path)));
+        }
+    }
+
+    sqlx::query("UPDATE user_settings SET custom_docs_path = ? WHERE id = 'singleton'")
+        .bind(&path)
+        .execute(&pool)
+        .await
+        .map_err(err500)?;
+
+    if path.is_empty() {
+        state.custom_docs_paths.remove(&user.sub);
+    } else {
+        state.custom_docs_paths.insert(user.sub.clone(), std::path::PathBuf::from(&path));
+    }
+
+    Ok(Json(serde_json::json!({ "custom_docs_path": path })))
 }
 
 // ── KG rebuild ────────────────────────────────────────────────────────────────
@@ -248,13 +300,29 @@ pub async fn rebuild(
             }
 
             if let (Ok(ua), Ok(ub)) = (Uuid::parse_str(id_a), Uuid::parse_str(id_b)) {
+                let docs_dir = state.user_docs_dir(&user.sub);
+                let label = {
+                    let src_opt = state.index.get_file_name(&user.sub, ua)
+                        .map(|f| docs_dir.join(f))
+                        .or_else(|| crate::store::file::find_doc_path(&docs_dir, ua))
+                        .and_then(|p| crate::store::file::parse_doc(&p).ok());
+                    let tgt_kw = state.index.get_file_name(&user.sub, ub)
+                        .map(|f| docs_dir.join(f))
+                        .or_else(|| crate::store::file::find_doc_path(&docs_dir, ub))
+                        .and_then(|p| crate::store::file::parse_doc(&p).ok())
+                        .map(|d| d.vector_keywords)
+                        .unwrap_or_default();
+                    src_opt.map(|src| crate::store::classify::classify_link_label(&src.body, &src.vector_keywords, &tgt_kw))
+                        .unwrap_or(LinkLabel::RelatedTo)
+                };
+
                 if sim >= auto_threshold && !link_settings.links_require_review {
-                    if super::inbox::do_link_docs(&state, &user.sub, ua, ub, LinkLabel::RelatedTo, &pool, &session_id).await.is_ok() {
+                    if super::inbox::do_link_docs(&state, &user.sub, ua, ub, label.clone(), &pool, &session_id, "auto").await.is_ok() {
                         proposed_pairs.insert((a, b));
                         links_auto_applied += 1;
                     }
                 } else {
-                    if meta_db::insert_link_proposal(&pool, ua, ub, "related_to", sim, &session_id).await.is_ok() {
+                    if meta_db::insert_link_proposal(&pool, ua, ub, &label.to_string(), sim, &session_id).await.is_ok() {
                         proposed_pairs.insert((a, b));
                         proposals_queued_for_review += 1;
                     }

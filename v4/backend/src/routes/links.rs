@@ -127,7 +127,7 @@ pub async fn resolve_proposal(
             if src_ok && tgt_ok {
                 super::inbox::do_link_docs(
                     &state, &user.sub, source_id, target_id, label, &pool,
-                    p.session_id.as_deref().unwrap_or(""),
+                    p.session_id.as_deref().unwrap_or(""), "manual",
                 ).await.map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
             } else {
                 // One or both docs were deleted. Mark proposal rejected so it disappears.

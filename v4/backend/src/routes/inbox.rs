@@ -145,7 +145,7 @@ pub async fn submit(
                     if let Ok(linked_uuid) = Uuid::parse_str(linked_id_str) {
                         do_link_docs(
                             &state2, &user2.sub, doc_uuid, linked_uuid,
-                            LinkLabel::RelatedTo, &pool2, &inbox_id2,
+                            LinkLabel::RelatedTo, &pool2, &inbox_id2, "manual",
                         ).await.ok();
                     }
                 }
@@ -774,7 +774,7 @@ async fn do_create(
         generated: Some(file::make_generated(Some("agent:inbox-router/v4"), "pat")),
         verified: vec![],
         task_status: TaskStatus::default(),
-        priority: DocPriority::default(),
+        priority: None,
         flag: false,
         due_date: None,
         due_time: None,
@@ -785,10 +785,14 @@ async fn do_create(
         hitl_required: false,
         hitl_status: None,
         note_outline: None,
+        vector_keywords: vec![],
+        keyword_source_hash: None,
         created_at: now,
         updated_at: now,
     };
     doc.note_outline = Some(file::compute_outline(&doc.body));
+    doc.vector_keywords = crate::store::keywords::extract_keywords(&doc.title, &doc.description, &doc.body);
+    doc.keyword_source_hash = Some(crate::store::keywords::source_hash(&doc.title, &doc.body));
     if let Some(tid) = theme_id {
         if !doc.theme_ids.contains(&tid.to_string()) {
             doc.theme_ids.push(tid.to_string());
@@ -842,7 +846,7 @@ async fn apply_user_meta_to_doc(
             .and_then(|p| p.file_name()?.to_str().map(String::from)))
         .ok_or_else(|| anyhow::anyhow!("doc not found: {}", doc_id))?;
     let mut doc = file::parse_doc(&docs_dir.join(&file_name))?;
-    if let Some(p) = &user_meta.priority    { doc.priority    = p.clone(); }
+    if let Some(p) = &user_meta.priority    { doc.priority = Some(p.clone()); }
     if let Some(s) = &user_meta.task_status { doc.task_status = s.clone(); }
     if let Some(d) = &user_meta.due_date    { doc.due_date    = Some(d.clone()); }
     if let Some(t) = &user_meta.due_time    { doc.due_time    = Some(t.clone()); }
@@ -868,6 +872,7 @@ pub async fn do_link_docs(
     label: LinkLabel,
     pool: &sqlx::SqlitePool,
     session_id: &str,
+    link_source: &str,
 ) -> anyhow::Result<()> {
     if source_id == target_id {
         anyhow::bail!("self-links are not allowed");
@@ -879,8 +884,12 @@ pub async fn do_link_docs(
         .ok_or_else(|| anyhow::anyhow!("source doc {} not found", source_id))?;
 
     let mut doc = file::parse_doc(&docs_dir.join(&file_name))?;
+    // Auto-linker must not overwrite a link the user has explicitly set.
+    if link_source == "auto" && doc.links.iter().any(|l| l.target_id == target_id && l.source.as_deref() == Some("manual")) {
+        return Ok(());
+    }
     if !doc.links.iter().any(|l| l.target_id == target_id && l.label == label) {
-        doc.links.push(DocLink { target_id, label, title: None });
+        doc.links.push(DocLink { target_id, label, title: None, source: Some(link_source.to_string()) });
     }
     doc.updated_at = Utc::now();
     file::write_doc(&docs_dir, &doc, Some(&file_name))?;
@@ -956,16 +965,37 @@ async fn run_async_link_analysis(
 
     if candidates.is_empty() { return; }
 
+    let src_doc_opt = {
+        let docs_dir = state.user_docs_dir(&user_sub);
+        state.index.get_file_name(&user_sub, doc_id)
+            .map(|f| docs_dir.join(f))
+            .or_else(|| file::find_doc_path(&docs_dir, doc_id))
+            .and_then(|p| file::parse_doc(&p).ok())
+    };
+
     for (target_id, confidence) in candidates {
+        let label = if let Some(ref src) = src_doc_opt {
+            let docs_dir = state.user_docs_dir(&user_sub);
+            let tgt_kw = state.index.get_file_name(&user_sub, target_id)
+                .map(|f| docs_dir.join(f))
+                .or_else(|| file::find_doc_path(&docs_dir, target_id))
+                .and_then(|p| file::parse_doc(&p).ok())
+                .map(|d| d.vector_keywords)
+                .unwrap_or_default();
+            crate::store::classify::classify_link_label(&src.body, &src.vector_keywords, &tgt_kw)
+        } else {
+            LinkLabel::RelatedTo
+        };
+
         // Above threshold + require_review=off → apply directly
         // Everything else above the floor → queue for review
         if confidence >= auto_threshold && !require_review {
             do_link_docs(
-                &state, &user_sub, doc_id, target_id, LinkLabel::RelatedTo, &pool, &session_id,
+                &state, &user_sub, doc_id, target_id, label.clone(), &pool, &session_id, "auto",
             ).await.ok();
         } else {
             meta_db::insert_link_proposal(
-                &pool, doc_id, target_id, "related_to", confidence, &session_id,
+                &pool, doc_id, target_id, &label.to_string(), confidence, &session_id,
             ).await.ok();
         }
     }

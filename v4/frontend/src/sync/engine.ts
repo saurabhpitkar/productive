@@ -12,6 +12,7 @@ const DEFAULT_INTERVAL_MS = Number(import.meta.env.VITE_SYNC_INTERVAL_MS ?? 180_
 class SyncEngine {
   private timer:        ReturnType<typeof setInterval> | null = null
   private running       = false
+  private queued        = false   // a run() call arrived while we were busy
   private backgroundMs  = DEFAULT_INTERVAL_MS
   private currentUserId = ''
 
@@ -68,12 +69,15 @@ class SyncEngine {
   }
 
   async run() {
-    if (this.running) return
+    if (this.running) {
+      this.queued = true   // flush again once the current cycle finishes
+      return
+    }
     this.running = true
     useSyncStore.getState().setSyncing(true)
     try {
-      await this.delta()
       await this.flushOutbox()
+      await this.delta()
       useSyncStore.getState().setLastSync(new Date().toISOString())
       useSyncStore.getState().setSyncError(null)
       const upcoming = await db.docs
@@ -86,6 +90,11 @@ class SyncEngine {
     } finally {
       this.running = false
       useSyncStore.getState().setSyncing(false)
+      // A change arrived during this cycle — flush it now rather than waiting for the timer.
+      if (this.queued) {
+        this.queued = false
+        setTimeout(() => this.run(), 0)
+      }
     }
   }
 
@@ -94,8 +103,18 @@ class SyncEngine {
     if (!meta) return this.fullLoad()
 
     const { docs, lists, deleted_doc_ids, deleted_list_ids } = await api.delta(meta.last_sync_at)
+
+    // Don't overwrite docs that still have pending local writes — the outbox
+    // for those will be flushed in the next run(), and then delta will pick up
+    // the server-confirmed version.
+    const pendingIds = new Set(
+      (await db.outbox.filter(e => !e.failed && e.type === 'update').toArray())
+        .map(e => e.payload.id as string)
+    )
+    const safeDocs = docs.filter(d => !pendingIds.has(d.id))
+
     await db.transaction('rw', db.docs, db.lists, db.syncMeta, async () => {
-      if (docs.length)               await db.docs.bulkPut(docs)
+      if (safeDocs.length)           await db.docs.bulkPut(safeDocs)
       if (lists.length)              await db.lists.bulkPut(lists)
       if (deleted_doc_ids?.length)   await db.docs.bulkDelete(deleted_doc_ids)
       if (deleted_list_ids?.length)  await db.lists.bulkDelete(deleted_list_ids)

@@ -116,7 +116,9 @@ export const api = {
   deleteTheme:  (id: string)            => req<void>(`/themes/${id}`, { method: 'DELETE' }),
 
   // ── Knowledge graph ────────────────────────────────────────────────────────
-  getStorageInfo: () => req<{ mode: string; docs_container_path: string; docs_folder_configured: boolean }>('/kg/storage'),
+  getStorageInfo: () => req<{ mode: string; docs_container_path: string; docs_folder_configured: boolean; custom_docs_path?: string }>('/kg/storage'),
+  updateStorage: (patch: { custom_docs_path?: string }) =>
+    req<{ custom_docs_path: string }>('/kg/storage', { method: 'PATCH', body: JSON.stringify(patch) }),
   rebuildKg: () => req<{
     docs_scanned: number; docs_already_embedded: number; embeddings_updated: number;
     embedding_errors: number; docs_with_embeddings: number;
@@ -125,6 +127,8 @@ export const api = {
     links_auto_applied: number; docs_theme_assigned: number;
     warning?: string; error_detail?: string;
   }>('/kg/rebuild', { method: 'POST' }),
+
+  resetAccountData: () => req<{ deleted_docs: number; seeded: boolean }>('/account/data', { method: 'DELETE' }),
 
   // ── Activity log ───────────────────────────────────────────────────────────
   getActivityLog: (params?: { limit?: number; since?: string }) => {

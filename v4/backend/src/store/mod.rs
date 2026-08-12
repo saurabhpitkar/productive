@@ -1,13 +1,15 @@
+pub mod classify;
 pub mod file;
 pub mod git;
 pub mod index;
+pub mod keywords;
 pub mod watch;
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Result;
-use dashmap::DashSet;
+use dashmap::{DashMap, DashSet};
 use sqlx::SqlitePool;
 
 use self::index::DocIndex;
@@ -33,6 +35,8 @@ pub struct AppState {
     pub route_threshold: f32,
     /// Tracks which users already have an active file-system watcher.
     pub watched_users: Arc<DashSet<String>>,
+    /// Per-user custom docs directory (overrides default per-user docs/).
+    pub custom_docs_paths: Arc<DashMap<String, PathBuf>>,
 }
 
 impl AppState {
@@ -54,6 +58,7 @@ impl AppState {
         let token_db = crate::meta_db::init_token_db(&token_db_path).await?;
 
         let index = Arc::new(DocIndex::new());
+        let custom_docs_paths: Arc<DashMap<String, PathBuf>> = Arc::new(DashMap::new());
 
         // Warm up the in-memory index from all docs that already exist on disk.
         // Without this, traverse_subtree and link lookups return empty results
@@ -62,9 +67,22 @@ impl AppState {
         if let Ok(user_entries) = std::fs::read_dir(&users_dir) {
             for user_entry in user_entries.flatten() {
                 let user_id = user_entry.file_name().to_string_lossy().to_string();
+
+                // Load per-user custom docs path from _meta.db (if any)
+                let user_root = user_entry.path();
+                if let Ok(pool) = crate::meta_db::init_user_meta_db(&user_root).await {
+                    if let Ok(settings) = crate::meta_db::get_settings(&pool).await {
+                        if let Some(p) = settings.custom_docs_path.filter(|s| !s.is_empty()) {
+                            custom_docs_paths.insert(user_id.clone(), PathBuf::from(p));
+                        }
+                    }
+                }
+
                 // When DOCS_DIR is set, all users share that flat folder; otherwise use per-user docs/
                 let scan_dir = if let Some(ref dd) = docs_dir {
                     dd.clone()
+                } else if let Some(custom) = custom_docs_paths.get(&user_id) {
+                    custom.value().clone()
                 } else {
                     user_entry.path().join("docs")
                 };
@@ -103,6 +121,7 @@ impl AppState {
             index,
             token_db,
             watched_users: Arc::new(DashSet::new()),
+            custom_docs_paths,
             jwt_secret: std::env::var("JWT_SECRET_KEY")
                 .unwrap_or_else(|_| "dev-secret-change-me".to_string()),
             fernet_key: std::env::var("FERNET_KEY").unwrap_or_default(),
@@ -134,11 +153,15 @@ impl AppState {
     }
 
     /// Returns the directory where a user's docs are stored, creating it if needed.
-    /// When `DOCS_DIR` is set, all users share that flat folder (single-user / local-folder mode).
+    /// Priority: DOCS_DIR env var → per-user custom path → default per-user docs/.
     pub fn user_docs_dir(&self, user_id: &str) -> PathBuf {
         if let Some(ref dd) = self.docs_dir {
             std::fs::create_dir_all(dd).ok();
             return dd.clone();
+        }
+        if let Some(custom) = self.custom_docs_paths.get(user_id) {
+            std::fs::create_dir_all(custom.value()).ok();
+            return custom.value().clone();
         }
         let dir = self.data_dir.join("users").join(user_id).join("docs");
         std::fs::create_dir_all(&dir).ok();

@@ -170,8 +170,7 @@ pub struct Doc {
     pub verified: Vec<OkfVerified>,          // OKF: trust (grows on HITL approval)
     // Productive-specific
     pub task_status: TaskStatus,             // renamed from v3 'status'
-    #[serde(default)]
-    pub priority: DocPriority,
+    pub priority: Option<DocPriority>,
     pub flag: bool,
     pub due_date: Option<String>,
     pub due_time: Option<String>,
@@ -185,6 +184,12 @@ pub struct Doc {
     pub hitl_required: bool,
     pub hitl_status: Option<String>,
     pub note_outline: Option<serde_json::Value>,
+    /// Top-5 representative keywords extracted from title+body (weighted TF).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub vector_keywords: Vec<String>,
+    /// SHA-256 fingerprint of title+body at the time keywords were last extracted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keyword_source_hash: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -195,6 +200,9 @@ pub struct DocLink {
     pub target_id: Uuid,
     pub label: LinkLabel,
     pub title: Option<String>,
+    /// "auto" = created by the auto-linker; "manual" = set by a human (protected from auto-overwrite).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
 }
 
 // ── API response shapes ───────────────────────────────────────────────────────
@@ -210,7 +218,7 @@ pub struct DocResponse {
     pub lifecycle: String,
     pub stale_after: Option<String>,
     pub task_status: String,
-    pub priority: String,
+    pub priority: Option<String>,
     pub flag: bool,
     pub due_date: Option<String>,
     pub due_time: Option<String>,
@@ -238,7 +246,7 @@ impl From<&Doc> for DocResponse {
             lifecycle: d.lifecycle.to_string(),
             stale_after: d.stale_after.clone(),
             task_status: d.task_status.to_string(),
-            priority: d.priority.to_string(),
+            priority: d.priority.as_ref().map(|p| p.to_string()),
             flag: d.flag,
             due_date: d.due_date.clone(),
             due_time: d.due_time.clone(),
@@ -265,7 +273,7 @@ pub struct DocSummary {
     pub description: String,
     pub task_status: String,
     pub lifecycle: String,
-    pub priority: String,
+    pub priority: Option<String>,
     pub hitl_required: bool,
     pub link_count: usize,
     pub body_preview: String,
@@ -281,7 +289,7 @@ impl From<&Doc> for DocSummary {
             description: d.description.clone(),
             task_status: d.task_status.to_string(),
             lifecycle: d.lifecycle.to_string(),
-            priority: d.priority.to_string(),
+            priority: d.priority.as_ref().map(|p| p.to_string()),
             hitl_required: d.hitl_required,
             link_count: d.links.len(),
             body_preview: d.body.chars().take(200).collect(),
@@ -349,7 +357,7 @@ pub struct SubtreeNode {
     pub description: String,
     pub task_status: String,
     pub lifecycle: String,
-    pub priority: String,
+    pub priority: Option<String>,
     pub hitl_required: bool,
     pub link_count: usize,
     pub body_preview: String,

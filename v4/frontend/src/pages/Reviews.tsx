@@ -200,6 +200,29 @@ export function Reviews() {
     setProposals(p => p.filter(x => x.id !== id))
   }
 
+  const handleBulkResolve = async (outcome: 'approved' | 'rejected') => {
+    const pending = tab === 'links'
+      ? proposals
+      : reviews.filter(r => r.outcome === null)
+    if (pending.length === 0) return
+    setResolving(true)
+    setError(null)
+    try {
+      if (tab === 'links') {
+        for (const p of proposals) await api.resolveLinkProposal(p.id, outcome)
+        setProposals([])
+      } else {
+        for (const r of reviews.filter(r => r.outcome === null))
+          await resolveReview(r.id, outcome, undefined)
+        await load()
+      }
+    } catch {
+      setError('Failed to resolve all')
+    } finally {
+      setResolving(false)
+    }
+  }
+
   const itemCount = tab === 'links' ? proposals.length : reviews.length
 
   return (
@@ -214,9 +237,29 @@ export function Reviews() {
             </span>
           )}
         </div>
-        <button onClick={load} className="text-sm text-indigo-600 dark:text-indigo-400 hover:underline">
-          Refresh
-        </button>
+        <div className="flex items-center gap-3">
+          {itemCount > 0 && !loading && (
+            <>
+              <button
+                onClick={() => handleBulkResolve('approved')}
+                disabled={resolving}
+                className="px-3 py-1.5 text-xs font-medium bg-green-600 hover:bg-green-700 text-white rounded-lg disabled:opacity-50 transition-colors"
+              >
+                Approve all
+              </button>
+              <button
+                onClick={() => handleBulkResolve('rejected')}
+                disabled={resolving}
+                className="px-3 py-1.5 text-xs font-medium bg-red-600 hover:bg-red-700 text-white rounded-lg disabled:opacity-50 transition-colors"
+              >
+                Reject all
+              </button>
+            </>
+          )}
+          <button onClick={load} className="text-sm text-indigo-600 dark:text-indigo-400 hover:underline">
+            Refresh
+          </button>
+        </div>
       </div>
 
       {/* Tabs */}

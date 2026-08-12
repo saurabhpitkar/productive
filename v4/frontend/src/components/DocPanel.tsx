@@ -121,10 +121,6 @@ export function DocPanel({ docId, onClose }: Props) {
     const arr = await db.docs.toArray()
     return arr.sort((a, b) => b.updated_at.localeCompare(a.updated_at))
   }, [])
-  const allLists = useLiveQuery(async () => {
-    const arr = await db.lists.toArray()
-    return arr.sort((a, b) => a.list_name.localeCompare(b.list_name))
-  }, [])
 
   const [name,      setName]      = useState('')
   const [body,      setBody]      = useState('')
@@ -133,7 +129,6 @@ export function DocPanel({ docId, onClose }: Props) {
   const [dueTime,   setDueTime]   = useState('')
   const [priority,  setPriority]  = useState<Priority | ''>('')
   const [status,    setStatus]    = useState<DocStatus>('todo')
-  const [listId,    setListId]    = useState('')
   const [tagsStr,   setTagsStr]   = useState('')
   const [linkedIds,     setLinkedIds]    = useState<string[]>([])
   const [wikiLinkedIds, setWikiLinkedIds]= useState<Set<string>>(new Set())
@@ -143,7 +138,6 @@ export function DocPanel({ docId, onClose }: Props) {
   const [reqParentIds,     setReqParentIds]     = useState<string[]>([])
   const [linkSearch,    setLinkSearch]   = useState('')
   const [linkFilter,    setLinkFilter]   = useState<'all' | 'today' | 'not_done'>('not_done')
-  const [linkListFilter, setLinkListFilter] = useState('')
   const [graphOpen,     setGraphOpen]     = useState(true)
   const [listOpen,      setListOpen]      = useState(false)
   const [noteOpen,      setNoteOpen]      = useState(false)
@@ -156,9 +150,9 @@ export function DocPanel({ docId, onClose }: Props) {
   const autoSaveTimer  = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Mirror of current field values for use inside setTimeout closures
-  const fieldsRef = useRef({ name, body, flag, dueDate, dueTime, priority, status, listId, tagsStr, hitlRequired })
+  const fieldsRef = useRef({ name, body, flag, dueDate, dueTime, priority, status, tagsStr, hitlRequired })
   useEffect(() => {
-    fieldsRef.current = { name, body, flag, dueDate, dueTime, priority, status, listId, tagsStr, hitlRequired }
+    fieldsRef.current = { name, body, flag, dueDate, dueTime, priority, status, tagsStr, hitlRequired }
   })
 
   // Mark that the user has made a manual edit (prevents auto-save on initial load)
@@ -171,7 +165,7 @@ export function DocPanel({ docId, onClose }: Props) {
     setAutoSaveStatus('')
     if (autoSaveTimer.current) { clearTimeout(autoSaveTimer.current); autoSaveTimer.current = null }
     setName(''); setBody(''); setFlag(false); setDueDate(''); setDueTime('')
-    setPriority(''); setStatus('todo'); setListId(''); setTagsStr('')
+    setPriority(''); setStatus('todo'); setTagsStr('')
     setLinkedIds([]); setWikiLinkedIds(new Set()); setLinkLabels({}); setBacklinks([]); setLinkSearch('')
     setGraphOpen(true); setListOpen(false); setNoteOpen(false); setHitlRequired(false)
   }, [docId])
@@ -190,7 +184,6 @@ export function DocPanel({ docId, onClose }: Props) {
     setDueTime(doc.due_time ?? '')
     setPriority(doc.priority ?? '')
     setStatus(doc.status)
-    setListId(doc.list_id ?? '')
     setTagsStr(Object.entries(doc.tags || {}).map(([k, v]) => `${k}=${v}`).join(', '))
     setLinkedIds(doc.linked_doc_ids ?? [])
   }, [doc])
@@ -230,9 +223,8 @@ export function DocPanel({ docId, onClose }: Props) {
       flag:          f.flag || null,
       due_date:      f.dueDate || null,
       due_time:      f.dueTime || null,
-      priority:      (f.priority || null) as Priority | null,
+      priority:      f.priority as Priority | null,
       status:        f.status,
-      list_id:       f.listId  || null,
       tags:          parseTags(f.tagsStr),
       hitl_required: f.hitlRequired,
     })
@@ -250,7 +242,7 @@ export function DocPanel({ docId, onClose }: Props) {
       } catch { /* sync error, will retry */ }
     }, 2000)
     return () => { if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current) }
-  }, [name, body, flag, dueDate, dueTime, priority, status, listId, tagsStr, hitlRequired, isNew, autoSave, doUpdateDoc])
+  }, [name, body, flag, dueDate, dueTime, priority, status, tagsStr, hitlRequired, isNew, autoSave, doUpdateDoc])
 
   const outlineItems = useMemo(() => extractOutlineFromBody(body), [body])
 
@@ -269,7 +261,6 @@ export function DocPanel({ docId, onClose }: Props) {
     if (linkSearch && !d.name.toLowerCase().includes(linkSearch.toLowerCase())) return false
     if (linkFilter === 'today' && d.updated_at.slice(0, 10) !== today) return false
     if (linkFilter === 'not_done' && ['done', 'cancelled', 'archived'].includes(d.status)) return false
-    if (linkListFilter && d.list_id !== linkListFilter) return false
     return true
   })
 
@@ -356,10 +347,9 @@ export function DocPanel({ docId, onClose }: Props) {
       const tags     = parseTags(tagsStr)
       const due_date = dueDate || null
       const due_time = dueTime || null
-      const list_id  = listId  || null
       const pri      = (priority || null) as Priority | null
       if (isNew) {
-        const newDoc = await createDoc({ name: name.trim(), body, flag, due_date, due_time, priority: pri, status, list_id, tags, theme_ids: [] })
+        const newDoc = await createDoc({ name: name.trim(), body, flag, due_date, due_time, priority: pri, status, list_id: null, tags, theme_ids: [] })
         for (const tid of linkedIds) await addLink(newDoc.id, tid)
         onClose()
       } else if (docId) {
@@ -432,15 +422,6 @@ export function DocPanel({ docId, onClose }: Props) {
             {STATUS_OPTS.map(s => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}
           </select>
         </div>
-      </div>
-      <div>
-        <Label>List</Label>
-        <select id="doc-list" name="doc-list" value={listId}
-          onChange={e => { setListId(e.target.value); markEdited() }}
-          className={FIELD_CLS}>
-          <option value="">None</option>
-          {(allLists ?? []).map(l => <option key={l.id} value={l.id}>{l.list_name}</option>)}
-        </select>
       </div>
       <div>
         <Label>Tags (key=value, comma-separated)</Label>
@@ -525,18 +506,6 @@ export function DocPanel({ docId, onClose }: Props) {
             {f === 'all' ? 'All' : f === 'today' ? 'Updated today' : 'Active'}
           </button>
         ))}
-        {(allLists ?? []).length > 0 && (
-          <select
-            value={linkListFilter}
-            onChange={e => setLinkListFilter(e.target.value)}
-            className="ml-auto text-[10px] bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 border-0 rounded-full px-2 py-0.5 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
-          >
-            <option value="">All lists</option>
-            {(allLists ?? []).map(l => (
-              <option key={l.id} value={l.id}>{l.list_name}</option>
-            ))}
-          </select>
-        )}
       </div>
       <div className="rounded-lg border border-gray-100 dark:border-gray-800 overflow-hidden">
         {filteredLinks.slice(0, 40).map(d => {

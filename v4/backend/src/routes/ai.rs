@@ -481,8 +481,8 @@ fn build_tools_anthropic() -> serde_json::Value {
     serde_json::json!([
         { "name": "list_docs",     "description": "List docs for the user",      "input_schema": { "type": "object", "properties": { "q": { "type": "string" }, "status": { "type": "string" }, "limit": { "type": "integer" } } } },
         { "name": "get_doc",       "description": "Get a doc by ID",             "input_schema": { "type": "object", "properties": { "id": { "type": "string" } }, "required": ["id"] } },
-        { "name": "create_doc",    "description": "Create a new doc",            "input_schema": { "type": "object", "properties": { "name": { "type": "string" }, "body": { "type": "string" }, "status": { "type": "string" }, "priority": { "type": "string" } }, "required": ["name"] } },
-        { "name": "update_doc",    "description": "Update an existing doc",      "input_schema": { "type": "object", "properties": { "id": { "type": "string" }, "name": { "type": "string" }, "body": { "type": "string" }, "status": { "type": "string" } }, "required": ["id"] } },
+        { "name": "create_doc",    "description": "Create a new doc",            "input_schema": { "type": "object", "properties": { "name": { "type": "string" }, "body": { "type": "string" }, "status": { "type": "string", "enum": ["todo", "in_progress", "done", "cancelled", "archived"] }, "priority": { "type": "string", "enum": ["low", "medium", "high"] } }, "required": ["name"] } },
+        { "name": "update_doc",    "description": "Update an existing doc. To clear a field pass null. priority accepts low/medium/high or null to remove.", "input_schema": { "type": "object", "properties": { "id": { "type": "string" }, "name": { "type": "string" }, "body": { "type": "string" }, "status": { "type": "string", "enum": ["todo", "in_progress", "done", "cancelled", "archived"] }, "priority": { "type": ["string", "null"], "enum": ["low", "medium", "high", null] } }, "required": ["id"] } },
         { "name": "delete_doc",    "description": "Delete a doc permanently",    "input_schema": { "type": "object", "properties": { "id": { "type": "string" } }, "required": ["id"] } },
         { "name": "get_linked_docs","description": "Get docs linked to a doc",   "input_schema": { "type": "object", "properties": { "id": { "type": "string" } }, "required": ["id"] } },
         { "name": "get_lists",     "description": "Get all lists",               "input_schema": { "type": "object", "properties": {} } },
@@ -494,8 +494,8 @@ fn build_tools_openai() -> serde_json::Value {
     serde_json::json!([
         { "type": "function", "function": { "name": "list_docs",      "description": "List docs for the user",     "parameters": { "type": "object", "properties": { "q": { "type": "string" }, "status": { "type": "string" }, "limit": { "type": "integer" } } } } },
         { "type": "function", "function": { "name": "get_doc",        "description": "Get a doc by ID",            "parameters": { "type": "object", "properties": { "id": { "type": "string" } }, "required": ["id"] } } },
-        { "type": "function", "function": { "name": "create_doc",     "description": "Create a new doc",           "parameters": { "type": "object", "properties": { "name": { "type": "string" }, "body": { "type": "string" }, "status": { "type": "string" }, "priority": { "type": "string" } }, "required": ["name"] } } },
-        { "type": "function", "function": { "name": "update_doc",     "description": "Update an existing doc",     "parameters": { "type": "object", "properties": { "id": { "type": "string" }, "name": { "type": "string" }, "body": { "type": "string" }, "status": { "type": "string" } }, "required": ["id"] } } },
+        { "type": "function", "function": { "name": "create_doc",     "description": "Create a new doc",           "parameters": { "type": "object", "properties": { "name": { "type": "string" }, "body": { "type": "string" }, "status": { "type": "string", "enum": ["todo", "in_progress", "done", "cancelled", "archived"] }, "priority": { "type": "string", "enum": ["low", "medium", "high"] } }, "required": ["name"] } } },
+        { "type": "function", "function": { "name": "update_doc",     "description": "Update an existing doc. priority accepts low/medium/high or null to remove.", "parameters": { "type": "object", "properties": { "id": { "type": "string" }, "name": { "type": "string" }, "body": { "type": "string" }, "status": { "type": "string", "enum": ["todo", "in_progress", "done", "cancelled", "archived"] }, "priority": { "type": ["string", "null"] } }, "required": ["id"] } } },
         { "type": "function", "function": { "name": "delete_doc",     "description": "Delete a doc permanently",   "parameters": { "type": "object", "properties": { "id": { "type": "string" } }, "required": ["id"] } } },
         { "type": "function", "function": { "name": "get_linked_docs","description": "Get docs linked to a doc",   "parameters": { "type": "object", "properties": { "id": { "type": "string" } }, "required": ["id"] } } },
         { "type": "function", "function": { "name": "get_lists",      "description": "Get all lists",              "parameters": { "type": "object", "properties": {} } } },
@@ -564,6 +564,11 @@ async fn handle_tool(
             use crate::models::{Doc, DocPriority, TaskStatus};
             let now = Utc::now();
             let title = input.get("name").and_then(|v| v.as_str()).unwrap_or("Untitled").to_string();
+            let task_status = input.get("status").and_then(|v| v.as_str())
+                .and_then(|s| s.parse().ok()).unwrap_or(TaskStatus::Todo);
+            let priority = input.get("priority").and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .and_then(|s| s.parse().ok());
             let mut doc = Doc {
                 id: Uuid::new_v4(),
                 doc_type: "Note".to_string(),
@@ -574,15 +579,18 @@ async fn handle_tool(
                 stale_after: None,
                 generated: None,
                 verified: vec![],
-                task_status: TaskStatus::Todo,
-                priority: DocPriority::Medium,
+                task_status,
+                priority,
                 flag: false,
                 due_date: None, due_time: None, list_id: None, tags: Default::default(),
                 theme_ids: vec![],
                 links: vec![], hitl_required: false, hitl_status: None, note_outline: None,
+                vector_keywords: vec![], keyword_source_hash: None,
                 created_at: now, updated_at: now,
             };
             doc.note_outline = Some(file::compute_outline(&doc.body));
+            doc.vector_keywords = crate::store::keywords::extract_keywords(&doc.title, &doc.description, &doc.body);
+            doc.keyword_source_hash = Some(crate::store::keywords::source_hash(&doc.title, &doc.body));
             if let Ok(path) = file::write_doc(&docs_dir, &doc, None) {
                 let file_name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
                 let user_root = state.user_root_dir(&user.sub);
@@ -608,7 +616,13 @@ async fn handle_tool(
                         Ok(mut doc) => {
                             if let Some(b) = input.get("body").and_then(|v| v.as_str()) { doc.body = b.to_string(); doc.note_outline = Some(file::compute_outline(&doc.body)); }
                             if let Some(n) = input.get("name").and_then(|v| v.as_str()) { doc.title = n.to_string(); }
-                            if let Some(s) = input.get("task_status").and_then(|v| v.as_str()) { doc.task_status = s.parse().unwrap_or_default(); }
+                            if let Some(s) = input.get("status").and_then(|v| v.as_str()) { doc.task_status = s.parse().unwrap_or_default(); }
+                            // priority: absent/null = keep current; "" = clear; "low"/"medium"/"high" = set
+                            if let Some(pv) = input.get("priority") {
+                                if let Some(p) = pv.as_str() {
+                                    doc.priority = if p.is_empty() { None } else { p.parse().ok() };
+                                }
+                            }
                             doc.updated_at = Utc::now();
                             if let Ok(new_path) = file::write_doc(&docs_dir, &doc, Some(&current_file_name)) {
                                 let new_file_name = new_path.file_name().unwrap_or_default().to_string_lossy().to_string();

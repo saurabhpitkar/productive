@@ -1,12 +1,8 @@
 import { NavLink, Link, useNavigate } from 'react-router-dom'
-import { useLiveQuery } from 'dexie-react-hooks'
-import { useState, useEffect, useRef, useCallback } from 'react'
-import { db } from '../db'
-import { createList, renameList, deleteList } from '../sync/engine'
+import { useState, useEffect, useCallback } from 'react'
 import { useUIStore } from '../store/ui'
 import { useAuthStore } from '../store/auth'
 import { fetchReviews } from '../lib/hitl'
-import { ConfirmDialog } from './ConfirmDialog'
 import { api } from '../api/client'
 import type { Theme } from '../types'
 
@@ -30,10 +26,6 @@ function NavItem({ to, icon, label, onClick }: { to: string; icon: React.ReactNo
     </NavLink>
   )
 }
-
-type ListMenu = { id: string; name: string; x: number; y: number }
-type DeleteConfirm = { id: string; name: string; count: number }
-
 
 function ActivitySection() {
   const { setActiveRoutingCount } = useUIStore()
@@ -81,20 +73,6 @@ export function Sidebar({ onSearchOpen, onInboxOpen }: { onSearchOpen?: () => vo
   const closeOnMobile = () => {
     if (window.innerWidth < 768) toggleSidebar()
   }
-  const lists = useLiveQuery(async () => {
-    const arr = await db.lists.toArray()
-    return arr.sort((a, b) => a.list_name.localeCompare(b.list_name))
-  }, [])
-
-  const docCounts = useLiveQuery(async () => {
-    const docs = await db.docs.filter(d => !!d.list_id && d.status !== 'archived').toArray()
-    const counts: Record<string, number> = {}
-    for (const d of docs) counts[d.list_id!] = (counts[d.list_id!] ?? 0) + 1
-    return counts
-  }, [])
-
-  const [newName, setNewName] = useState('')
-  const [adding, setAdding] = useState(false)
   const [pendingReviews, setPendingReviews] = useState(0)
   const navigate = useNavigate()
 
@@ -103,16 +81,6 @@ export function Sidebar({ onSearchOpen, onInboxOpen }: { onSearchOpen?: () => vo
   const [themesExpanded, setThemesExpanded] = useState(true)
   const [addingTheme, setAddingTheme] = useState(false)
   const [newThemeName, setNewThemeName] = useState('')
-
-  // List context menu state
-  const [listMenu, setListMenu] = useState<ListMenu | null>(null)
-  const [renamingId, setRenamingId] = useState<string | null>(null)
-  const [renameValue, setRenameValue] = useState('')
-  const [deleteConfirm, setDeleteConfirm] = useState<DeleteConfirm | null>(null)
-
-  // Long-press tracking (one timer shared across all list items)
-  const longPressTimer = useRef<ReturnType<typeof setTimeout>>()
-  const longPressMoved = useRef(false)
 
   useEffect(() => {
     const load = () => fetchReviews().then(r => setPendingReviews(r.length)).catch(() => {})
@@ -134,80 +102,6 @@ export function Sidebar({ onSearchOpen, onInboxOpen }: { onSearchOpen?: () => vo
     setAddingTheme(false)
     navigate(`/themes/${theme.id}`)
     closeOnMobile()
-  }
-
-  // Close list menu on outside click / scroll
-  useEffect(() => {
-    if (!listMenu) return
-    const close = () => setListMenu(null)
-    window.addEventListener('mousedown', close)
-    window.addEventListener('touchstart', close)
-    window.addEventListener('scroll', close, true)
-    return () => {
-      window.removeEventListener('mousedown', close)
-      window.removeEventListener('touchstart', close)
-      window.removeEventListener('scroll', close, true)
-    }
-  }, [listMenu])
-
-  const handleCreate = async () => {
-    const name = newName.trim()
-    if (!name) return
-    const list = await createList(name)
-    setNewName('')
-    setAdding(false)
-    navigate(`/lists/${list.id}`)
-    closeOnMobile()
-  }
-
-  const openListMenu = (id: string, name: string, x: number, y: number) => {
-    setListMenu({ id, name, x, y })
-  }
-
-  const handleListContextMenu = (e: React.MouseEvent, id: string, name: string) => {
-    e.preventDefault()
-    openListMenu(id, name, e.clientX, e.clientY)
-  }
-
-  const handleListTouchStart = (e: React.TouchEvent, id: string, name: string) => {
-    longPressMoved.current = false
-    const t = e.touches[0]
-    longPressTimer.current = setTimeout(() => {
-      if (!longPressMoved.current) openListMenu(id, name, t.clientX, t.clientY)
-    }, 500)
-  }
-
-  const handleListTouchMove = () => {
-    clearTimeout(longPressTimer.current)
-    longPressMoved.current = true
-  }
-
-  const handleListTouchEnd = () => clearTimeout(longPressTimer.current)
-
-  const startRename = (id: string, name: string) => {
-    setListMenu(null)
-    setRenamingId(id)
-    setRenameValue(name)
-  }
-
-  const commitRename = async () => {
-    if (renamingId && renameValue.trim()) {
-      await renameList(renamingId, renameValue)
-    }
-    setRenamingId(null)
-    setRenameValue('')
-  }
-
-  const requestDelete = (id: string, name: string) => {
-    setListMenu(null)
-    const count = docCounts?.[id] ?? 0
-    setDeleteConfirm({ id, name, count })
-  }
-
-  const confirmDelete = async () => {
-    if (!deleteConfirm) return
-    await deleteList(deleteConfirm.id, true)
-    setDeleteConfirm(null)
   }
 
   return (
@@ -355,78 +249,6 @@ export function Sidebar({ onSearchOpen, onInboxOpen }: { onSearchOpen?: () => vo
         </>
       )}
 
-      {/* Lists section */}
-      <div className="mt-4 mb-1 px-3 flex items-center justify-between">
-        <span className="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Lists</span>
-        <button
-          onClick={() => setAdding(true)}
-          className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
-          title="New list"
-        >
-          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-          </svg>
-        </button>
-      </div>
-
-      {lists?.map(list => (
-        <div
-          key={list.id}
-          onContextMenu={e => handleListContextMenu(e, list.id, list.list_name)}
-          onTouchStart={e => handleListTouchStart(e, list.id, list.list_name)}
-          onTouchMove={handleListTouchMove}
-          onTouchEnd={handleListTouchEnd}
-        >
-          {renamingId === list.id ? (
-            <div className="flex gap-1 px-1 my-0.5">
-              <input
-                autoFocus
-                value={renameValue}
-                onChange={e => setRenameValue(e.target.value)}
-                onBlur={commitRename}
-                onKeyDown={e => {
-                  if (e.key === 'Enter') commitRename()
-                  if (e.key === 'Escape') { setRenamingId(null); setRenameValue('') }
-                }}
-                className="flex-1 px-2 py-1.5 text-sm border border-indigo-300 dark:border-indigo-700 rounded-lg bg-white dark:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              />
-            </div>
-          ) : (
-            <NavLink
-              to={`/lists/${list.id}`}
-              onClick={closeOnMobile}
-              className={({ isActive }) =>
-                `flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors ${
-                  isActive
-                    ? 'bg-indigo-50 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300'
-                    : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-gray-100'
-                }`
-              }
-            >
-              <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-              </svg>
-              <span className="truncate flex-1">{list.list_name}</span>
-              <span className="ml-auto text-xs text-gray-400">{docCounts?.[list.id] ?? 0}</span>
-            </NavLink>
-          )}
-        </div>
-      ))}
-
-      {adding && (
-        <div className="flex gap-1 px-1">
-          <input
-            autoFocus
-            value={newName}
-            onChange={e => setNewName(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') handleCreate(); if (e.key === 'Escape') setAdding(false) }}
-            placeholder="List name"
-            className="flex-1 px-2 py-1.5 text-sm border border-indigo-300 dark:border-indigo-700 rounded-lg bg-white dark:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-          />
-          <button onClick={handleCreate} className="px-2 py-1 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">Add</button>
-        </div>
-      )}
-
       <ActivitySection />
 
       </div>{/* end scrollable section */}
@@ -479,63 +301,6 @@ export function Sidebar({ onSearchOpen, onInboxOpen }: { onSearchOpen?: () => vo
         </div>
       </div>
 
-      {/* List context menu popup (right-click / long-press) */}
-      {listMenu && (
-        <div
-          style={{
-            position: 'fixed',
-            top: Math.min(listMenu.y, window.innerHeight - 120),
-            left: Math.min(listMenu.x, window.innerWidth - 180),
-            zIndex: 250,
-            width: 172,
-          }}
-          className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-700 shadow-2xl p-1.5"
-          onMouseDown={e => e.stopPropagation()}
-          onTouchStart={e => e.stopPropagation()}
-        >
-          <p className="px-3 py-1.5 text-xs text-gray-400 dark:text-gray-500 truncate border-b border-gray-100 dark:border-gray-800 mb-1">
-            {listMenu.name}
-          </p>
-          <button
-            type="button"
-            onMouseDown={e => { e.stopPropagation(); startRename(listMenu.id, listMenu.name) }}
-            onTouchStart={e => { e.stopPropagation(); startRename(listMenu.id, listMenu.name) }}
-            className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm text-left text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors"
-          >
-            <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-            </svg>
-            Rename
-          </button>
-          <button
-            type="button"
-            onMouseDown={e => { e.stopPropagation(); requestDelete(listMenu.id, listMenu.name) }}
-            onTouchStart={e => { e.stopPropagation(); requestDelete(listMenu.id, listMenu.name) }}
-            className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm text-left text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
-          >
-            <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-            </svg>
-            Delete
-          </button>
-        </div>
-      )}
-
-      {/* Delete list confirmation */}
-      {deleteConfirm && (
-        <ConfirmDialog
-          title={`Delete "${deleteConfirm.name}"?`}
-          message={
-            deleteConfirm.count > 0
-              ? `This will permanently delete the list and all ${deleteConfirm.count} doc${deleteConfirm.count === 1 ? '' : 's'} in it. This cannot be undone.`
-              : 'This will permanently delete the list. This cannot be undone.'
-          }
-          confirmLabel="Delete"
-          danger
-          onConfirm={confirmDelete}
-          onCancel={() => setDeleteConfirm(null)}
-        />
-      )}
     </nav>
   )
 }

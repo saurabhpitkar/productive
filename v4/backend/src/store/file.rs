@@ -90,8 +90,8 @@ struct Frontmatter {
     // Productive-specific
     #[serde(default)]
     task_status: String,                        // todo | in_progress | done | cancelled | archived
-    #[serde(default)]
-    priority: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    priority: Option<String>,
     #[serde(default)]
     flag: bool,
     #[serde(default)]
@@ -110,6 +110,10 @@ struct Frontmatter {
     hitl_required: bool,
     #[serde(default)]
     hitl_status: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    vector_keywords: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    keyword_source_hash: Option<String>,
 
     created_at: String,
     updated_at: String,
@@ -133,6 +137,8 @@ struct FrontmatterLink {
     label: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source: Option<String>,
 }
 
 fn default_type() -> String { "Note".to_string() }
@@ -159,7 +165,7 @@ pub fn parse_doc_str(content: &str) -> Result<Doc> {
         .filter_map(|l| {
             let target_id = Uuid::parse_str(&l.target_id).ok()?;
             let label: LinkLabel = l.label.parse().ok()?;
-            Some(DocLink { target_id, label, title: l.title.clone() })
+            Some(DocLink { target_id, label, title: l.title.clone(), source: l.source.clone() })
         })
         .collect();
 
@@ -206,7 +212,7 @@ pub fn parse_doc_str(content: &str) -> Result<Doc> {
         generated: fm.generated.map(|g| OkfGenerated { by: g.by, at: g.at }),
         verified: fm.verified.into_iter().map(|v| OkfVerified { by: v.by, at: v.at }).collect(),
         task_status: task_status_str.parse().unwrap_or_default(),
-        priority: fm.priority.parse().unwrap_or_default(),
+        priority: fm.priority.as_deref().filter(|s| !s.is_empty()).and_then(|s| s.parse().ok()),
         flag: fm.flag,
         due_date: fm.due_date,
         due_time: fm.due_time,
@@ -217,6 +223,8 @@ pub fn parse_doc_str(content: &str) -> Result<Doc> {
         hitl_required: fm.hitl_required,
         hitl_status: fm.hitl_status,
         note_outline: Some(note_outline),
+        vector_keywords: fm.vector_keywords,
+        keyword_source_hash: fm.keyword_source_hash,
         created_at,
         updated_at,
     })
@@ -254,7 +262,7 @@ pub fn serialize_doc(doc: &Doc) -> Result<String> {
             at: v.at.clone(),
         }).collect(),
         task_status: doc.task_status.to_string(),
-        priority: doc.priority.to_string(),
+        priority: doc.priority.as_ref().map(|p| p.to_string()),
         flag: doc.flag,
         due_date: doc.due_date.clone(),
         due_time: doc.due_time.clone(),
@@ -269,9 +277,12 @@ pub fn serialize_doc(doc: &Doc) -> Result<String> {
             target_id: l.target_id.to_string(),
             label: l.label.to_string(),
             title: l.title.clone(),
+            source: l.source.clone(),
         }).collect(),
         hitl_required: doc.hitl_required,
         hitl_status: doc.hitl_status.clone(),
+        vector_keywords: doc.vector_keywords.clone(),
+        keyword_source_hash: doc.keyword_source_hash.clone(),
         created_at: doc.created_at.to_rfc3339(),
         updated_at: doc.updated_at.to_rfc3339(),
     };

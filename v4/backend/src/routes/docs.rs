@@ -72,7 +72,7 @@ pub async fn list(
         else { s == status_filter }
     });
 
-    if let Some(p) = &q.priority { docs.retain(|d| d.priority.to_string() == *p); }
+    if let Some(p) = &q.priority { docs.retain(|d| d.priority.as_ref().map_or(false, |dp| dp.to_string() == *p)); }
     if let Some(flag) = q.flag { docs.retain(|d| d.flag == flag); }
     if let Some(lid) = q.list_id { docs.retain(|d| d.list_id == Some(lid)); }
     if let Some(query) = &q.q {
@@ -124,7 +124,7 @@ pub async fn create(
         generated,
         verified: vec![],
         task_status: body.task_status.as_deref().and_then(|s| s.parse().ok()).unwrap_or_default(),
-        priority: body.priority.as_deref().and_then(|s| s.parse().ok()).unwrap_or_default(),
+        priority: body.priority.as_deref().filter(|s| !s.is_empty()).and_then(|s| s.parse().ok()),
         flag: body.flag.unwrap_or(false),
         due_date: body.due_date,
         due_time: body.due_time,
@@ -134,16 +134,20 @@ pub async fn create(
         links: body.links.as_deref().unwrap_or(&[]).iter()
             .filter_map(|l| {
                 let label: LinkLabel = l.label.as_deref().unwrap_or("related_to").parse().ok()?;
-                Some(DocLink { target_id: l.target_doc_id, label, title: l.title.clone() })
+                Some(DocLink { target_id: l.target_doc_id, label, title: l.title.clone(), source: Some("manual".to_string()) })
             })
             .collect(),
         hitl_required: body.hitl_required.unwrap_or(false),
         hitl_status: None,
         note_outline: None,
+        vector_keywords: vec![],
+        keyword_source_hash: None,
         created_at: now,
         updated_at: now,
     };
     doc.note_outline = Some(file::compute_outline(&doc.body));
+    doc.vector_keywords = crate::store::keywords::extract_keywords(&doc.title, &doc.description, &doc.body);
+    doc.keyword_source_hash = Some(crate::store::keywords::source_hash(&doc.title, &doc.body));
 
     let docs_dir = state.user_docs_dir(&user.sub);
     let path = file::write_doc(&docs_dir, &doc, None)
@@ -226,7 +230,7 @@ pub async fn batch_create(
             generated,
             verified: vec![],
             task_status: req.task_status.as_deref().and_then(|s| s.parse().ok()).unwrap_or_default(),
-            priority: req.priority.as_deref().and_then(|s| s.parse().ok()).unwrap_or_default(),
+            priority: req.priority.as_deref().filter(|s| !s.is_empty()).and_then(|s| s.parse().ok()),
             flag: req.flag.unwrap_or(false),
             due_date: req.due_date,
             due_time: req.due_time,
@@ -236,16 +240,20 @@ pub async fn batch_create(
             links: req.links.as_deref().unwrap_or(&[]).iter()
                 .filter_map(|l| {
                     let label: LinkLabel = l.label.as_deref().unwrap_or("related_to").parse().ok()?;
-                    Some(DocLink { target_id: l.target_doc_id, label, title: l.title.clone() })
+                    Some(DocLink { target_id: l.target_doc_id, label, title: l.title.clone(), source: Some("manual".to_string()) })
                 })
                 .collect(),
             hitl_required: req.hitl_required.unwrap_or(false),
             hitl_status: None,
             note_outline: None,
+            vector_keywords: vec![],
+            keyword_source_hash: None,
             created_at: now,
             updated_at: now,
         };
         doc.note_outline = Some(file::compute_outline(&doc.body));
+        doc.vector_keywords = crate::store::keywords::extract_keywords(&doc.title, &doc.description, &doc.body);
+        doc.keyword_source_hash = Some(crate::store::keywords::source_hash(&doc.title, &doc.body));
 
         let path = file::write_doc(&docs_dir, &doc, None)
             .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
@@ -414,6 +422,7 @@ pub async fn update(
         AuthMethod::Cookie => "cookie",
         AuthMethod::Pat => "pat",
     };
+    let content_changed = body.name.is_some() || body.body.is_some() || body.description.is_some();
 
     if let Some(name) = body.name { doc.title = name; }
     if let Some(b) = body.body {
@@ -427,7 +436,9 @@ pub async fn update(
     if let Some(v) = body.stale_after {
         doc.stale_after = if v.is_null() { None } else { v.as_str().map(String::from) };
     }
-    if let Some(p) = body.priority { doc.priority = p.parse().unwrap_or_default(); }
+    if let Some(p) = &body.priority {
+        doc.priority = if p.is_empty() { None } else { p.parse().ok() };
+    }
     if let Some(f) = body.flag { doc.flag = f; }
     if let Some(v) = body.due_date {
         doc.due_date = if v.is_null() { None } else { v.as_str().map(String::from) };
@@ -453,9 +464,17 @@ pub async fn update(
             .filter_map(|l| {
                 let label: LinkLabel = l.label.as_deref().unwrap_or("related_to").parse().ok()?;
                 if l.target_doc_id == id { return None; }
-                Some(DocLink { target_id: l.target_doc_id, label, title: l.title.clone() })
+                Some(DocLink { target_id: l.target_doc_id, label, title: l.title.clone(), source: Some("manual".to_string()) })
             })
             .collect();
+    }
+
+    // Refresh keywords when title, description, or body changed
+    if content_changed {
+        if crate::store::keywords::should_refresh(&doc.title, &doc.body, doc.keyword_source_hash.as_deref()) {
+            doc.vector_keywords = crate::store::keywords::extract_keywords(&doc.title, &doc.description, &doc.body);
+            doc.keyword_source_hash = Some(crate::store::keywords::source_hash(&doc.title, &doc.body));
+        }
     }
 
     // Update provenance
@@ -574,7 +593,7 @@ pub async fn add_link(
     let mut doc = file::parse_doc(&path).map_err(|_| err(StatusCode::NOT_FOUND, "doc not found"))?;
 
     if !doc.links.iter().any(|l| l.target_id == body.target_doc_id && l.label == label) {
-        doc.links.push(DocLink { target_id: body.target_doc_id, label: label.clone(), title: body.title.clone() });
+        doc.links.push(DocLink { target_id: body.target_doc_id, label: label.clone(), title: body.title.clone(), source: Some("manual".to_string()) });
     }
 
     doc.updated_at = Utc::now();
@@ -702,7 +721,7 @@ impl From<&Doc> for SubtreeNode {
             description: d.description.clone(),
             task_status: d.task_status.to_string(),
             lifecycle: d.lifecycle.to_string(),
-            priority: d.priority.to_string(),
+            priority: d.priority.as_ref().map(|p| p.to_string()),
             hitl_required: d.hitl_required,
             link_count: d.links.len(),
             body_preview: d.body.chars().take(200).collect(),

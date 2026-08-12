@@ -693,13 +693,43 @@ function SyncSection() {
 // ── Storage section ───────────────────────────────────────────────────────────
 
 function StorageSection() {
-  const [info, setInfo] = useState<{ mode: string; docs_container_path: string; docs_folder_configured: boolean } | null>(null)
+  const [info, setInfo] = useState<{ mode: string; docs_container_path: string; docs_folder_configured: boolean; custom_docs_path?: string } | null>(null)
   const [importing, setImporting] = useState(false)
   const [importResult, setImportResult] = useState<{ imported: number; skipped: number } | null>(null)
+  const [linkedPath, setLinkedPath] = useState('')
+  const [savingPath, setSavingPath] = useState(false)
+  const [pathError, setPathError] = useState<string | null>(null)
+  const [pathSaved, setPathSaved] = useState(false)
+  const [rebuildStatus, setRebuildStatus] = useState<string | null>(null)
 
   useEffect(() => {
-    api.getStorageInfo().then(setInfo).catch(() => {})
+    api.getStorageInfo().then(d => {
+      setInfo(d)
+      setLinkedPath(d.custom_docs_path ?? '')
+    }).catch(() => {})
   }, [])
+
+  const handleLinkFolder = async () => {
+    setPathError(null)
+    setPathSaved(false)
+    setRebuildStatus(null)
+    setSavingPath(true)
+    try {
+      await api.updateStorage({ custom_docs_path: linkedPath.trim() })
+      const fresh = await api.getStorageInfo()
+      setInfo(fresh)
+      setPathSaved(true)
+      setTimeout(() => setPathSaved(false), 3000)
+      // Rebuild KG so new files get embedded and linked
+      setRebuildStatus('Rebuilding knowledge graph…')
+      const r = await api.rebuildKg()
+      setRebuildStatus(`Done — ${r.docs_scanned} docs scanned, ${r.embeddings_updated} embeddings updated.`)
+    } catch (e) {
+      setPathError(e instanceof Error ? e.message : 'Failed to save path')
+    } finally {
+      setSavingPath(false)
+    }
+  }
 
   const supportsFilePicker = typeof window !== 'undefined' && 'showDirectoryPicker' in window
 
@@ -792,6 +822,42 @@ function StorageSection() {
           </p>
         </div>
       )}
+
+      {/* Link folder — path input */}
+      <div>
+        <SectionHeader
+          title="Link folder"
+          description="Point to a container-accessible path containing your Markdown files. The knowledge graph rebuilds automatically when you save."
+        />
+        <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-800 px-4 py-4 flex flex-col gap-3">
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={linkedPath}
+              onChange={e => { setLinkedPath(e.target.value); setPathError(null) }}
+              placeholder="/data/my-notes  or  /mnt/docs"
+              className="flex-1 text-sm font-mono bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-gray-900 dark:text-gray-100"
+            />
+            <button
+              onClick={handleLinkFolder}
+              disabled={savingPath}
+              className="flex-shrink-0 px-3 py-2 text-sm font-medium rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white transition-colors"
+            >
+              {savingPath ? 'Saving…' : pathSaved ? 'Saved!' : 'Link folder'}
+            </button>
+          </div>
+          {pathError && (
+            <p className="text-xs text-red-600 dark:text-red-400">{pathError}</p>
+          )}
+          {rebuildStatus && (
+            <p className="text-xs text-gray-500 dark:text-gray-400">{rebuildStatus}</p>
+          )}
+          <p className="text-xs text-gray-400 dark:text-gray-600">
+            Enter the path as the container sees it (e.g. the <code className="font-mono bg-gray-100 dark:bg-gray-800 px-0.5 rounded">target</code> side of your Docker volume mount).
+            Leave empty to revert to the default Docker volume.
+          </p>
+        </div>
+      </div>
 
       {supportsFilePicker && (
         <div>
@@ -1089,6 +1155,81 @@ function KgRebuildCard() {
   )
 }
 
+// ── Danger zone ───────────────────────────────────────────────────────────────
+
+function DangerZoneSection() {
+  const [expanded, setExpanded] = useState(false)
+  const [resetting, setResetting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const handleReset = async () => {
+    setError(null)
+    setResetting(true)
+    try {
+      await api.resetAccountData()
+      window.location.reload()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Reset failed')
+      setResetting(false)
+    }
+  }
+
+  return (
+    <div>
+      <SectionHeader title="Danger zone" />
+      <div className="rounded-xl border border-red-200 dark:border-red-900 overflow-hidden">
+        <div className="px-4 py-4">
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-gray-900 dark:text-gray-100">Reset account data</p>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                Permanently deletes all your docs and re-seeds fresh demo content. This cannot be undone.
+              </p>
+            </div>
+            <button
+              onClick={() => { setExpanded(v => !v); setError(null) }}
+              className="flex-shrink-0 px-3 py-1.5 text-sm font-medium rounded-lg border border-red-300 dark:border-red-800 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors"
+            >
+              Reset…
+            </button>
+          </div>
+
+          {expanded && (
+            <div className="mt-4 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 rounded-lg p-4 flex flex-col gap-3">
+              <div className="flex gap-2">
+                <span className="text-red-600 dark:text-red-400 text-lg leading-none">⚠</span>
+                <div>
+                  <p className="text-sm font-semibold text-red-800 dark:text-red-300">All your docs will be permanently deleted.</p>
+                  <p className="text-xs text-red-700 dark:text-red-400 mt-1 leading-relaxed">
+                    Every document, link, and theme assignment will be erased and replaced with demo content.
+                    Your AI settings and API tokens are not affected. This action is irreversible.
+                  </p>
+                </div>
+              </div>
+              {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
+              <div className="flex gap-2">
+                <button
+                  onClick={() => { setExpanded(false); setError(null) }}
+                  className="flex-1 py-2 text-sm font-medium rounded-lg border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleReset}
+                  disabled={resetting}
+                  className="flex-1 py-2 text-sm font-semibold rounded-lg bg-red-600 hover:bg-red-700 disabled:opacity-60 text-white transition-colors"
+                >
+                  {resetting ? 'Resetting…' : 'Yes, delete all my docs'}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Main Settings page ────────────────────────────────────────────────────────
 
 const SECTIONS = ['account', 'ai_usage'] as const
@@ -1133,6 +1274,7 @@ export function Settings() {
           <ApiTokensSection />
           <SyncSection />
           <StorageSection />
+          <DangerZoneSection />
         </div>
       )}
       {active === 'ai_usage' && (

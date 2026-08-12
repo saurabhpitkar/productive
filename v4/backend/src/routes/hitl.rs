@@ -121,7 +121,7 @@ pub async fn resolve_review(
                     doc.note_outline = Some(file::compute_outline(&doc.body));
                 }
                 if let Some(s) = payload.task_status { doc.task_status = s.parse().unwrap_or_default(); }
-                if let Some(p) = payload.priority { doc.priority = p.parse().unwrap_or_default(); }
+                if let Some(p) = payload.priority { doc.priority = if p.is_empty() { None } else { p.parse().ok() }; }
                 doc.hitl_status = None;
                 doc.updated_at = chrono::Utc::now();
                 file::write_doc(&docs_dir, &doc, Some(&file_name)).ok();
